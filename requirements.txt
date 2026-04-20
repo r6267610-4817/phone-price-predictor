@@ -4,4 +4,7 @@ numpy
 plotly
 scikit-learn
 pillow
+torch
+torchvision
+timm
 scipy
