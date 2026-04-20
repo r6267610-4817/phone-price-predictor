@@ -268,7 +268,6 @@ with tab3:
             filtered_df, x='Condition_Percentage', y='Price',
             title='Price vs Condition',
             color='Brand',
-            trendline='ols'
         )
         st.plotly_chart(fig_condition, use_container_width=True)
 
