@@ -23,10 +23,6 @@ warnings.filterwarnings('ignore')
 
 # Image processing
 from PIL import Image
-import torch
-import torchvision.transforms as transforms
-from torchvision import models
-import timm
 
 # Page configuration
 st.set_page_config(
