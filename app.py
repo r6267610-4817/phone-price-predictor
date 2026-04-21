@@ -340,7 +340,7 @@ with st.spinner("Training AI models..."):
     model_results, scaler, feature_names = train_models()
 
 # Model comparison
-st.subheader("📊 Model Performance Comparison (Based on Notebook Analysis)")
+st.subheader("📊 Model Performance Comparison")
 
 col1, col2, col3 = st.columns(3)
 for i, (name, results) in enumerate(model_results.items()):
