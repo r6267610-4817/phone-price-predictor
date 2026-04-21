@@ -148,7 +148,7 @@ with st.spinner("Loading pre-trained AI models..."):
     best_model, scaler, feature_names, model_metrics = load_saved_models()
 
 # Display feature names for debugging
-st.write(f"Loaded {len(feature_names)} features: {feature_names}")
+# st.write(f"Loaded {len(feature_names)} features: {feature_names}")
 
 # ==================== Sidebar Filters ====================
 st.sidebar.header("🔍 Data Filters")
@@ -264,7 +264,7 @@ with tab3:
 # ==================== Model Performance Display ====================
 st.header("🤖 Price Prediction Model")
 
-st.subheader("📊 Model Performance (from Notebook)")
+st.subheader("📊 Model Performance")
 
 # Display metrics from saved model
 gb_metrics = model_metrics.get('Gradient Boosting', {})
