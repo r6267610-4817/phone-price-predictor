@@ -360,20 +360,27 @@ best_model_name = "Gradient Boosting"
 best_model = model_results[best_model_name]['model']
 
 if hasattr(best_model, 'feature_importances_'):
-    feature_importance = pd.DataFrame({
-        'Feature': feature_names,
-        'Importance': best_model.feature_importances_
-    }).sort_values('Importance', ascending=False).head(15)
+    # Get feature importances
+    importances = best_model.feature_importances_
     
-    fig_importance = px.bar(
-        feature_importance, x='Importance', y='Feature',
-        orientation='h', title=f'Top 15 Features - {best_model_name}',
-        color='Importance', color_continuous_scale='Viridis'
-    )
-    fig_importance.update_layout(height=500)
-    st.plotly_chart(fig_importance, use_container_width=True)
-    
-    st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
+    # Ensure lengths match before creating DataFrame
+    if len(feature_names) == len(importances):
+        feature_importance = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance': importances
+        }).sort_values('Importance', ascending=False).head(15)
+        
+        fig_importance = px.bar(
+            feature_importance, x='Importance', y='Feature',
+            orientation='h', title=f'Top 15 Features - {best_model_name}',
+            color='Importance', color_continuous_scale='Viridis'
+        )
+        fig_importance.update_layout(height=500)
+        st.plotly_chart(fig_importance, use_container_width=True)
+        
+        st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
+    else:
+        st.info(f"📊 Feature importance visualization skipped (feature count: {len(feature_names)}, importance count: {len(importances)})")
 
 # ==================== Interactive Price Prediction ====================
 st.header("🎯 Interactive Price Predictor")
