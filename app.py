@@ -116,7 +116,6 @@ def load_and_preprocess_data():
 def prepare_features(df):
     """Prepare features - EXACTLY matching ipynb consensus feature selection"""
     # Selected features with Average_Rank < 10 from consensus feature ranking (ipynb)
-    # These are the exact 9 features used in the notebook
     selected_features = [
         'Months_Since_Release',
         'Condition_Score', 
@@ -326,7 +325,8 @@ def train_models():
             'r2_log': r2_log,
             'rmse_log': rmse_log,
             'predictions_log': y_pred_log,
-            'actual_log': y_test.values
+            'actual_log': y_test.values,
+            'feature_names': feature_names_list  # Store feature names with each model
         }
     
     return results, scaler, feature_names_list, X_test, y_test
@@ -367,12 +367,14 @@ st.success(f"🏆 Best model: **{best_model_name}** with R² = **{best_r2:.4f}**
 
 # Feature importance for Gradient Boosting (best model)
 best_model = model_results[best_model_name]['model']
+best_model_features = model_results[best_model_name].get('feature_names', feature_names)
 
 # Ensure feature_names and importance have same length
 importance_values = best_model.feature_importances_
-if len(feature_names) == len(importance_values):
+
+if len(best_model_features) == len(importance_values):
     feature_importance_df = pd.DataFrame({
-        'Feature': feature_names,
+        'Feature': best_model_features,
         'Importance': importance_values
     }).sort_values('Importance', ascending=False)
     
@@ -385,7 +387,10 @@ if len(feature_names) == len(importance_values):
     fig_importance.update_layout(height=400)
     st.plotly_chart(fig_importance, use_container_width=True)
 else:
-    st.warning(f"Feature importance display skipped: feature count ({len(feature_names)}) vs importance count ({len(importance_values)})")
+    st.warning(f"Feature importance display skipped: feature count ({len(best_model_features)}) vs importance count ({len(importance_values)})")
+    # Debug info
+    st.write(f"Feature names: {best_model_features}")
+    st.write(f"Importance length: {len(importance_values)}")
 
 st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
 
@@ -540,8 +545,9 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     # Selling tips
     st.markdown("### 📝 Selling Tips")
     
+    avg_images = int(filtered_df['image_count'].mean()) if len(filtered_df) > 0 else 5
     tips = [
-        f"📸 Include {max(5, int(filtered_df['image_count'].mean()) if len(filtered_df) > 0 else 5)}+ high-quality photos",
+        f"📸 Include {max(5, avg_images)}+ high-quality photos",
         "📝 Write detailed description highlighting unique features",
         "🏷️ Price competitively - consider 5-10% below similar listings for quick sale",
         "✅ Mention all included accessories and original packaging",
