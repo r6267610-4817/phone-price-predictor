@@ -281,6 +281,9 @@ def train_models():
     # Split data
     X_train, X_test, y_train, y_test = train_test_split(X, y_log, test_size=0.2, random_state=42)
     
+    # Store feature names before scaling
+    feature_names_list = X.columns.tolist()
+    
     # Scale features
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
@@ -304,8 +307,8 @@ def train_models():
     )
     rf.fit(X_train_scaled, y_train)
     
-    # Ridge Regression with cross-validation
-    ridge = RidgeCV(alphas=np.logspace(-3, 3, 50))
+    # Ridge Regression
+    ridge = Ridge(alpha=1.0)
     ridge.fit(X_train_scaled, y_train)
     
     # Make predictions
@@ -326,13 +329,12 @@ def train_models():
             'model': model,
             'rmse': np.sqrt(mean_squared_error(y_test_original, y_pred_original)),
             'mae': mean_absolute_error(y_test_original, y_pred_original),
-            'r2_log': r2_score(y_test, y_pred),  # R² on log scale
+            'r2_log': r2_score(y_test, y_pred),
             'predictions': y_pred,
             'actual': y_test.values
         }
     
-    return results, scaler, selected_features
-
+    return results, scaler, feature_names_list
 with st.spinner("Training AI models..."):
     model_results, scaler, feature_names = train_models()
 
