@@ -114,30 +114,6 @@ def load_and_preprocess_data():
     
     return df
 
-@st.cache_data
-def prepare_features(df):
-    """Prepare features - EXACTLY matching ipynb consensus feature selection"""
-    # Selected features with Average_Rank < 10 from consensus feature ranking (ipynb)
-    selected_features = [
-        'Months_Since_Release',
-        'Condition_Score', 
-        'Storage_GB',
-        'Product_Origin_Unknown',
-        'Is_Premium_Tier',
-        'Post_Recency_Log',
-        'Days_Since_Posted',
-        'Original_Price_HKD',
-        'Brand_Apple'
-    ]
-    
-    X = df[selected_features].copy()
-    
-    # Handle infinity and NaN
-    X = X.replace([np.inf, -np.inf], np.nan)
-    X = X.fillna(X.median())
-    
-    return X, selected_features
-
 # Load saved models
 @st.cache_resource
 def load_saved_models():
@@ -164,13 +140,15 @@ def load_saved_models():
 # Load data
 with st.spinner("Loading and processing data..."):
     df = load_and_preprocess_data()
-    X, selected_features = prepare_features(df)
 
 st.success(f"✅ Data loaded successfully! {len(df):,} listings analyzed")
 
 # Load saved models
 with st.spinner("Loading pre-trained AI models..."):
     best_model, scaler, feature_names, model_metrics = load_saved_models()
+
+# Display feature names for debugging
+st.write(f"Loaded {len(feature_names)} features: {feature_names}")
 
 # ==================== Sidebar Filters ====================
 st.sidebar.header("🔍 Data Filters")
@@ -359,20 +337,34 @@ with col3:
     days_since_posted = st.slider("Days Since Posted", 0, 365, 7)
     warranty_input = st.selectbox("Has Warranty?", ["No", "Yes"])
 
-# Prepare input features for prediction
+# Prepare input features for prediction - dynamically based on feature_names
 def prepare_prediction_input():
-    """Prepare input features - EXACTLY matching selected_features order"""
-    input_dict = {
-        'Months_Since_Release': months_input,
-        'Condition_Score': condition_input,
-        'Storage_GB': storage_input,
-        'Product_Origin_Unknown': 1 if product_origin_unknown == "Yes" else 0,
-        'Is_Premium_Tier': 1 if is_premium_tier == "Yes" else 0,
-        'Post_Recency_Log': np.log1p(days_since_posted),
-        'Days_Since_Posted': days_since_posted,
-        'Original_Price_HKD': original_price_input,
-        'Brand_Apple': 1 if brand_input == "Apple" else 0
-    }
+    """Prepare input features - dynamically based on loaded feature_names"""
+    input_dict = {}
+    
+    # Map user inputs to feature names
+    for feat in feature_names:
+        if feat == 'Months_Since_Release':
+            input_dict[feat] = months_input
+        elif feat == 'Condition_Score':
+            input_dict[feat] = condition_input
+        elif feat == 'Storage_GB':
+            input_dict[feat] = storage_input
+        elif feat == 'Product_Origin_Unknown':
+            input_dict[feat] = 1 if product_origin_unknown == "Yes" else 0
+        elif feat == 'Is_Premium_Tier':
+            input_dict[feat] = 1 if is_premium_tier == "Yes" else 0
+        elif feat == 'Post_Recency_Log':
+            input_dict[feat] = np.log1p(days_since_posted)
+        elif feat == 'Days_Since_Posted':
+            input_dict[feat] = days_since_posted
+        elif feat == 'Original_Price_HKD':
+            input_dict[feat] = original_price_input
+        elif feat == 'Brand_Apple':
+            input_dict[feat] = 1 if brand_input == "Apple" else 0
+        else:
+            # For any other features, use default values
+            input_dict[feat] = 0
     
     # Create DataFrame with correct column order
     input_df = pd.DataFrame([input_dict])[feature_names]
