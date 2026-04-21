@@ -13,7 +13,7 @@ import requests
 import json
 from io import BytesIO
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import Ridge, Lasso, ElasticNet
+from sklearn.linear_model import Ridge, Lasso, ElasticNet, RidgeCV
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -83,37 +83,30 @@ st.markdown("""
 # ==================== Data loading and preprocessing ====================
 @st.cache_data
 def load_and_preprocess_data():
-    """Load and preprocess the Carousell dataset"""
+    """Load and preprocess the Carousell dataset - MATCHING IPYNB EXACTLY"""
     df = pd.read_csv('carousell_regression_numeric_y_price_add_storage.csv')
     
-    # Clean price column - remove extreme outliers
-    df = df[(df['Price'] > 0) & (df['Price'] < 100000)]
-    df = df[df['Original_Price_HKD'] > 0]
+    # Clean price column
+    df = df[(df['Price'] > 0) & (df['Original_Price_HKD'] > 0)]
     
-    # Remove extreme outliers using IQR method (as in notebook)
-    Q1 = df['Price'].quantile(0.01)
-    Q3 = df['Price'].quantile(0.99)
-    df = df[(df['Price'] >= Q1) & (df['Price'] <= Q3)]
+    # Use EXACT same IQR outlier removal as in ipynb
+    Q1 = df['Price'].quantile(0.25)
+    Q3 = df['Price'].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    df = df[(df['Price'] >= lower_bound) & (df['Price'] <= upper_bound)]
     
     # Handle missing values
     df = df.fillna(df.median())
     
-    # Create derived features
+    # Create derived features (for EDA only, not for model)
     df['Price_Discount_Pct'] = ((df['Original_Price_HKD'] - df['Price']) / df['Original_Price_HKD']) * 100
     df['Price_Discount_Pct'] = df['Price_Discount_Pct'].clip(0, 100)
-    
-    df['Age_Months'] = df['Months_Since_Release']
-    df['Price_per_GB'] = df['Price'] / df['Storage_GB'].replace(0, 1)
-    df['Price_per_GB'] = df['Price_per_GB'].clip(0, 5000)
-    
     df['Value_Retention'] = (df['Price'] / df['Original_Price_HKD']) * 100
     df['Value_Retention'] = df['Value_Retention'].clip(0, 150)
     
-    df['Normalized_Condition'] = df['Condition_Percentage'] / 100
-    df['Battery_Health_Norm'] = df['Battery_Health_Percent'] / 100
-    df['Seller_Reputation_Norm'] = np.log1p(df['seller_reviews_count'])
-    
-    # Brand encoding
+    # Brand encoding for EDA
     brand_cols = ['Brand_Apple', 'Brand_Huawei', 'Brand_Samsung', 'Brand_Sony', 'Brand_Xiaomi']
     df['Brand'] = df[brand_cols].idxmax(axis=1).str.replace('Brand_', '')
     
@@ -121,8 +114,9 @@ def load_and_preprocess_data():
 
 @st.cache_data
 def prepare_features(df):
-    """Prepare features for machine learning - using top features from consensus ranking"""
-    # Selected features with Average_Rank < 10 from consensus feature ranking
+    """Prepare features - EXACTLY matching ipynb consensus feature selection"""
+    # Selected features with Average_Rank < 10 from consensus feature ranking (ipynb)
+    # These are the exact 9 features used in the notebook
     selected_features = [
         'Months_Since_Release',
         'Condition_Score', 
@@ -135,19 +129,7 @@ def prepare_features(df):
         'Brand_Apple'
     ]
     
-    # Add binary features for completeness
-    binary_cols = ['Is_Working', 'Is_MTR_Trade', 'Has_Warranty', 'Has_Box',
-                   'Has_Receipt', 'Has_Accessories', 'Is_Firm_Price',
-                   'Is_Urgent_Sale', 'Has_Repair_History', 'Has_Crack_Or_Line',
-                   'Has_Dual_SIM', 'Has_Brand_Keyword_Mismatch']
-    
-    # Add brand dummies for other brands (not in selected features)
-    brand_dummies = pd.get_dummies(df['Brand'], prefix='Brand')
-    # Keep only non-Apple brand dummies since Brand_Apple is already selected
-    other_brand_cols = [col for col in brand_dummies.columns if col != 'Brand_Apple']
-    
     X = df[selected_features].copy()
-    X = pd.concat([X, df[binary_cols], brand_dummies[other_brand_cols]], axis=1)
     
     # Handle infinity and NaN
     X = X.replace([np.inf, -np.inf], np.nan)
@@ -163,7 +145,7 @@ with st.spinner("Loading and processing data..."):
     df = load_and_preprocess_data()
     X, y_log, selected_features = prepare_features(df)
 
-st.success(f"✅ Data loaded successfully! {len(df)} listings analyzed")
+st.success(f"✅ Data loaded successfully! {len(df):,} listings analyzed")
 
 # ==================== Sidebar Filters ====================
 st.sidebar.header("🔍 Data Filters")
@@ -264,11 +246,11 @@ with tab3:
         st.plotly_chart(fig_storage, use_container_width=True)
     
     with col2:
-        # Removed trendline='ols' to avoid statsmodels dependency
         fig_condition = px.scatter(
             filtered_df, x='Condition_Percentage', y='Price',
             title='Price vs Condition',
-            color='Brand'
+            color='Brand',
+            trendline='ols'
         )
         st.plotly_chart(fig_condition, use_container_width=True)
 
@@ -276,13 +258,12 @@ with tab3:
 st.header("🤖 Price Prediction Model")
 
 @st.cache_resource
-@st.cache_resource
 def train_models():
-    """Train optimized models based on notebook analysis"""
-    # Split data
+    """Train optimized models - EXACTLY matching ipynb parameters"""
+    # Split data with same random_state as ipynb
     X_train, X_test, y_train, y_test = train_test_split(X, y_log, test_size=0.2, random_state=42)
     
-    # Store feature names BEFORE scaling (use X.columns)
+    # Store feature names
     feature_names_list = X.columns.tolist()
     
     # Scale features
@@ -290,56 +271,113 @@ def train_models():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # ... rest of the training code ...
+    # Gradient Boosting - EXACT parameters from ipynb (R2_Log: 0.4383)
+    gb = GradientBoostingRegressor(
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42
+    )
+    gb.fit(X_train_scaled, y_train)
     
-    # Make sure to return feature_names_list
-    return results, scaler, feature_names_list
+    # Random Forest - EXACT parameters from ipynb (R2_Log: 0.4256)
+    rf = RandomForestRegressor(
+        n_estimators=500,
+        min_samples_leaf=3,
+        random_state=42,
+        n_jobs=-1
+    )
+    rf.fit(X_train_scaled, y_train)
+    
+    # Ridge Regression
+    ridge = Ridge(alpha=1.0)
+    ridge.fit(X_train_scaled, y_train)
+    
+    # Make predictions and compute metrics
+    models = {
+        'Gradient Boosting': gb,
+        'Random Forest': rf,
+        'Ridge Regression': ridge
+    }
+    
+    results = {}
+    for name, model in models.items():
+        y_pred_log = model.predict(X_test_scaled)
+        # Convert from log scale back to original price for error metrics
+        y_pred_original = np.expm1(y_pred_log)
+        y_test_original = np.expm1(y_test)
+        
+        # Compute metrics on LOG scale (as in ipynb for R2)
+        r2_log = r2_score(y_test, y_pred_log)
+        rmse_log = np.sqrt(mean_squared_error(y_test, y_pred_log))
+        
+        # Compute metrics on ORIGINAL scale
+        rmse_original = np.sqrt(mean_squared_error(y_test_original, y_pred_original))
+        mae_original = mean_absolute_error(y_test_original, y_pred_original)
+        
+        results[name] = {
+            'model': model,
+            'rmse_original': rmse_original,
+            'mae_original': mae_original,
+            'r2_log': r2_log,
+            'rmse_log': rmse_log,
+            'predictions_log': y_pred_log,
+            'actual_log': y_test.values
+        }
+    
+    return results, scaler, feature_names_list, X_test, y_test
 
 with st.spinner("Training AI models..."):
-    model_results, scaler, feature_names = train_models()
+    model_results, scaler, feature_names, X_test, y_test = train_models()
 
-# Model comparison
+# Display model performance metrics (matching ipynb)
 st.subheader("📊 Model Performance Comparison")
 
-col1, col2, col3 = st.columns(3)
-for i, (name, results) in enumerate(model_results.items()):
-    with [col1, col2, col3][i]:
-        badge = "🥇 Best" if name == "Gradient Boosting" else "🥈" if name == "Random Forest" else "📊"
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3>{badge} {name}</h3>
-            <p>RMSE: <b>HK${results['rmse']:.0f}</b></p>
-            <p>MAE: <b>HK${results['mae']:.0f}</b></p>
-            <p>R² (log scale): <b>{results['r2_log']:.3f}</b></p>
-        </div>
-        """, unsafe_allow_html=True)
+# Create comparison table matching ipynb format
+comparison_data = []
+for name, results in model_results.items():
+    comparison_data.append({
+        'Model': name,
+        'Feature_Count': len(feature_names),
+        'R2_Log': results['r2_log'],
+        'RMSE_Log': results['rmse_log'],
+        'RMSE_Original': results['rmse_original'],
+        'MAE_Original': results['mae_original']
+    })
 
-# Feature importance - use X.columns directly
-best_model_name = "Gradient Boosting"
+comparison_df = pd.DataFrame(comparison_data)
+comparison_df = comparison_df.sort_values('R2_Log', ascending=False)
+
+# Format numeric columns
+comparison_df['R2_Log'] = comparison_df['R2_Log'].round(4)
+comparison_df['RMSE_Log'] = comparison_df['RMSE_Log'].round(4)
+comparison_df['RMSE_Original'] = comparison_df['RMSE_Original'].round(1)
+comparison_df['MAE_Original'] = comparison_df['MAE_Original'].round(1)
+
+st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+
+# Highlight best model
+best_model_name = comparison_df.loc[0, 'Model']
+best_r2 = comparison_df.loc[0, 'R2_Log']
+st.success(f"🏆 Best model: **{best_model_name}** with R² = **{best_r2:.4f}** on log scale (matching notebook results)")
+
+# Feature importance for Gradient Boosting (best model)
 best_model = model_results[best_model_name]['model']
 
-if hasattr(best_model, 'feature_importances_'):
-    # Use X.columns directly to ensure correct length
-    importances = best_model.feature_importances_
-    feature_names_from_X = X.columns.tolist()
-    
-    if len(feature_names_from_X) == len(importances):
-        feature_importance = pd.DataFrame({
-            'Feature': feature_names_from_X,
-            'Importance': importances
-        }).sort_values('Importance', ascending=False).head(15)
-        
-        fig_importance = px.bar(
-            feature_importance, x='Importance', y='Feature',
-            orientation='h', title=f'Top 15 Features - {best_model_name}',
-            color='Importance', color_continuous_scale='Viridis'
-        )
-        fig_importance.update_layout(height=500)
-        st.plotly_chart(fig_importance, use_container_width=True)
-        st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
-    else:
-        st.info(f"📊 Feature importance: {len(feature_names_from_X)} features, {len(importances)} importances - skipping visualization")
-        
+fig_importance = px.bar(
+    pd.DataFrame({
+        'Feature': feature_names,
+        'Importance': best_model.feature_importances_
+    }).sort_values('Importance', ascending=True),
+    x='Importance', y='Feature',
+    orientation='h', title=f'Feature Importance - {best_model_name}',
+    color='Importance', color_continuous_scale='Viridis'
+)
+fig_importance.update_layout(height=400)
+st.plotly_chart(fig_importance, use_container_width=True)
+
+st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
+
 # ==================== Interactive Price Prediction ====================
 st.header("🎯 Interactive Price Predictor")
 
@@ -347,71 +385,43 @@ st.markdown("Adjust the phone specifications below to get an AI-powered price es
 
 col1, col2, col3 = st.columns(3)
 
+# Default values based on data
+brand_default = df['Brand'].mode()[0] if len(df) > 0 else "Apple"
+storage_default = df['Storage_GB'].mode()[0] if len(df) > 0 else 256
+condition_default = int(df['Condition_Score'].median()) if len(df) > 0 else 85
+
 with col1:
-    brand_input = st.selectbox("Brand", options=df['Brand'].unique())
-    storage_input = st.selectbox("Storage (GB)", options=sorted(df['Storage_GB'].unique()))
-    condition_input = st.slider("Condition (%)", 0, 100, 90)
+    brand_input = st.selectbox("Brand", options=df['Brand'].unique(), index=0)
+    storage_input = st.selectbox("Storage (GB)", options=sorted(df['Storage_GB'].unique()), index=3 if 256 in df['Storage_GB'].unique() else 0)
+    condition_input = st.slider("Condition Score (0-100)", 0, 100, condition_default)
 
 with col2:
-    months_input = st.slider("Months Since Release", 0, 120, 24)
-    battery_input = st.slider("Battery Health (%)", 50, 100, 85)
-    warranty_input = st.selectbox("Has Warranty?", ["Yes", "No"])
+    months_input = st.slider("Months Since Release", 0, 60, 12)
+    original_price_input = st.number_input("Original Price (HKD)", min_value=1000, max_value=20000, value=7999, step=100)
+    product_origin_unknown = st.selectbox("Product Origin Unknown", ["No", "Yes"])
 
 with col3:
-    box_input = st.selectbox("Has Original Box?", ["Yes", "No"])
-    accessories_input = st.selectbox("Has Accessories?", ["Yes", "No"])
-    repair_input = st.selectbox("Has Repair History?", ["No", "Yes"])
+    is_premium_tier = st.selectbox("Premium Tier", ["No", "Yes"])
+    days_since_posted = st.slider("Days Since Posted", 0, 365, 7)
+    warranty_input = st.selectbox("Has Warranty?", ["No", "Yes"])
 
-# Prepare input features based on selected features
+# Prepare input features for prediction
 def prepare_prediction_input():
-    input_dict = {}
+    """Prepare input features - EXACTLY matching selected_features order"""
+    input_dict = {
+        'Months_Since_Release': months_input,
+        'Condition_Score': condition_input,
+        'Storage_GB': storage_input,
+        'Product_Origin_Unknown': 1 if product_origin_unknown == "Yes" else 0,
+        'Is_Premium_Tier': 1 if is_premium_tier == "Yes" else 0,
+        'Post_Recency_Log': np.log1p(days_since_posted),
+        'Days_Since_Posted': days_since_posted,
+        'Original_Price_HKD': original_price_input,
+        'Brand_Apple': 1 if brand_input == "Apple" else 0
+    }
     
-    # Get median values from training data for reference
-    original_price_median = df['Original_Price_HKD'].median()
-    post_recency_median = df['Post_Recency_Log'].median()
-    days_since_posted_median = df['Days_Since_Posted'].median()
-    product_origin_unknown_default = df['Product_Origin_Unknown'].mode()[0] if len(df['Product_Origin_Unknown'].mode()) > 0 else 0
-    is_premium_tier_default = df['Is_Premium_Tier'].mode()[0] if len(df['Is_Premium_Tier'].mode()) > 0 else 0
-    
-    for feat in feature_names:
-        if feat == 'Storage_GB':
-            input_dict[feat] = storage_input
-        elif feat == 'Months_Since_Release':
-            input_dict[feat] = months_input
-        elif feat == 'Condition_Score':
-            # Map condition percentage to Condition_Score (similar scale 0-100)
-            input_dict[feat] = condition_input
-        elif feat == 'Battery_Health_Percent':
-            input_dict[feat] = battery_input
-        elif feat == 'Original_Price_HKD':
-            input_dict[feat] = original_price_median
-        elif feat == 'Post_Recency_Log':
-            input_dict[feat] = post_recency_median
-        elif feat == 'Days_Since_Posted':
-            input_dict[feat] = days_since_posted_median
-        elif feat == 'Product_Origin_Unknown':
-            input_dict[feat] = product_origin_unknown_default
-        elif feat == 'Is_Premium_Tier':
-            input_dict[feat] = is_premium_tier_default
-        elif feat.startswith('Brand_'):
-            input_dict[feat] = 1 if feat == f'Brand_{brand_input}' else 0
-        elif feat in ['Has_Warranty', 'Has_Box', 'Has_Accessories', 
-                      'Has_Repair_History', 'Is_Working', 'Is_MTR_Trade',
-                      'Has_Receipt', 'Is_Firm_Price', 'Is_Urgent_Sale',
-                      'Has_Crack_Or_Line', 'Has_Dual_SIM',
-                      'Has_Brand_Keyword_Mismatch']:
-            input_dict[feat] = 0
-        else:
-            input_dict[feat] = X[feat].median() if feat in X.columns else 0
-    
-    # Override specific binary features
-    input_dict['Has_Warranty'] = 1 if warranty_input == "Yes" else 0
-    input_dict['Has_Box'] = 1 if box_input == "Yes" else 0
-    input_dict['Has_Accessories'] = 1 if accessories_input == "Yes" else 0
-    input_dict['Has_Repair_History'] = 1 if repair_input == "Yes" else 0
-    
+    # Create DataFrame with correct column order
     input_df = pd.DataFrame([input_dict])[feature_names]
-    input_df = input_df.fillna(0)
     
     return input_df
 
@@ -431,26 +441,24 @@ st.subheader("📈 AI Price Predictions")
 pred_cols = st.columns(len(predictions))
 for i, (name, pred) in enumerate(predictions.items()):
     with pred_cols[i]:
-        badge = "🏆" if name == "Gradient Boosting" else "📊"
+        badge = "🏆" if name == best_model_name else "📊"
         st.markdown(f"""
         <div class="prediction-card">
             <h3>{badge} {name}</h3>
             <h2 style="color: #667eea;">HK${pred:,.0f}</h2>
-            <p>R² (log scale): {(model_results[name]['r2_log'] * 100):.0f}%</p>
+            <p>R² (log): {model_results[name]['r2_log']:.3f}</p>
         </div>
         """, unsafe_allow_html=True)
 
-# Ensemble prediction (weighted by R² scores)
-weights = {name: results['r2_log'] for name, results in model_results.items()}
-total_weight = sum(weights.values())
-ensemble_pred = sum(predictions[name] * weights[name] / total_weight for name in predictions.keys())
+# Ensemble prediction (simple average for consistency)
+ensemble_pred = np.mean(list(predictions.values()))
 
 st.markdown(f"""
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
             padding: 2rem; border-radius: 1rem; text-align: center; margin-top: 1rem;">
-    <h3 style="color: white;">🎯 Weighted Ensemble Prediction</h3>
+    <h3 style="color: white;">🎯 Ensemble Prediction (Average of All Models)</h3>
     <h1 style="color: white; font-size: 3rem;">HK${ensemble_pred:,.0f}</h1>
-    <p style="color: white;">Based on {len(predictions)} AI models (weighted by R²)</p>
+    <p style="color: white;">Based on {len(predictions)} AI models</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -459,27 +467,26 @@ st.header("🤖 AI Assistant - Smart Recommendations")
 
 st.markdown("Get personalized buying/selling recommendations from our AI assistant")
 
+# Prepare context for recommendations
 def get_llm_recommendation():
     context = f"""
     Phone Specifications:
     - Brand: {brand_input}
     - Storage: {storage_input} GB
-    - Condition: {condition_input}%
+    - Condition Score: {condition_input}
     - Months since release: {months_input}
-    - Battery health: {battery_input}%
+    - Original price: HK${original_price_input:,.0f}
     - Has warranty: {warranty_input}
-    - Has original box: {box_input}
     
     AI Price Predictions:
-    - Gradient Boosting: HK${predictions.get('Gradient Boosting', 0):,.0f}
-    - Random Forest: HK${predictions.get('Random Forest', 0):,.0f}
-    - Ridge Regression: HK${predictions.get('Ridge Regression', 0):,.0f}
+    - {best_model_name}: HK${predictions.get(best_model_name, 0):,.0f}
     - Ensemble: HK${ensemble_pred:,.0f}
     
     Market Context:
     - Average price for {brand_input}: HK${filtered_df[filtered_df['Brand']==brand_input]['Price'].mean():,.0f}
     - Typical discount rate: {filtered_df['Price_Discount_Pct'].mean():.1f}%
     """
+    
     return context
 
 recommendation_context = get_llm_recommendation()
@@ -489,7 +496,8 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     col1, col2 = st.columns(2)
     with col1:
-        brand_avg = filtered_df[filtered_df['Brand']==brand_input]['Price'].mean()
+        # Price position analysis
+        brand_avg = filtered_df[filtered_df['Brand']==brand_input]['Price'].mean() if len(filtered_df[filtered_df['Brand']==brand_input]) > 0 else df['Price'].mean()
         if ensemble_pred > brand_avg * 1.1:
             st.info(f"📈 This device is priced **{((ensemble_pred/brand_avg)-1)*100:.0f}% above** the average {brand_input} price")
         elif ensemble_pred < brand_avg * 0.9:
@@ -498,11 +506,12 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
             st.info(f"📊 This device is priced **around market average** for {brand_input}")
     
     with col2:
-        condition_impact = filtered_df.groupby('Brand')['Condition_Percentage'].mean()
+        # Condition impact
+        condition_impact = filtered_df.groupby('Brand')['Condition_Score'].mean()
         if condition_input > condition_impact.get(brand_input, 80):
-            st.success(f"✨ Above-average condition (+{condition_input - condition_impact.get(brand_input, 80):.0f}%) → Higher value")
+            st.success(f"✨ Above-average condition (+{condition_input - condition_impact.get(brand_input, 80):.0f} points) → Higher value")
         elif condition_input < condition_impact.get(brand_input, 80):
-            st.warning(f"⚠️ Below-average condition ({condition_input - condition_impact.get(brand_input, 80):.0f}%) → Lower value")
+            st.warning(f"⚠️ Below-average condition ({condition_input - condition_impact.get(brand_input, 80):.0f} points) → Lower value")
         else:
             st.info("✅ Average condition for this brand")
     
@@ -512,8 +521,8 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     if condition_input < 70:
         recommendations.append("🔧 Consider professional cleaning/repair before selling to increase value")
-    if not warranty_input == "Yes" and months_input < 12:
-        recommendations.append("📋 Device is relatively new but lacks warranty - highlight its excellent condition")
+    if warranty_input == "Yes" and months_input < 12:
+        recommendations.append("📋 Device has warranty - highlight this in your listing")
     if ensemble_pred > filtered_df['Price'].quantile(0.75):
         recommendations.append("💰 Premium pricing range - target collectors or brand enthusiasts")
     elif ensemble_pred < filtered_df['Price'].quantile(0.25):
@@ -525,6 +534,7 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     for rec in recommendations:
         st.write(rec)
     
+    # Analysis based on best model
     st.markdown("### 🧠 AI Deep Analysis")
     
     if ensemble_pred > 8000:
@@ -536,6 +546,7 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     st.info(f"💭 {analysis}")
     
+    # Selling tips
     st.markdown("### 📝 Selling Tips")
     
     tips = [
@@ -548,8 +559,9 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     for tip in tips:
         st.write(tip)
-
+        
 # ==================== Phone Condition Image Analysis ====================
+
 st.header("📸 Phone Condition Analysis (AI Vision Detection)")
 
 st.markdown("Upload a phone photo for AI-powered condition assessment (screen condition, body wear, overall score)")
@@ -562,17 +574,21 @@ uploaded_file = st.file_uploader(
 
 def extract_image_features(image):
     """Extract image features for analysis"""
-    img_array = np.array(image.convert('L'))
+    img_array = np.array(image.convert('L'))  # Convert to grayscale
     
+    # Calculate image quality metrics
     brightness = np.mean(img_array)
     contrast = np.std(img_array)
     sharpness = np.std(np.diff(img_array, axis=0)) + np.std(np.diff(img_array, axis=1))
     
+    # Detect potential defects based on image texture
     from scipy import ndimage
     
+    # Edge detection (may indicate scratches or cracks)
     edges = ndimage.sobel(img_array)
     edge_density = np.mean(np.abs(edges) > 30)
     
+    # Uniformity detection (may indicate worn areas)
     uniformity = 1 - np.std(img_array) / np.mean(img_array) if np.mean(img_array) > 0 else 0
     
     return {
@@ -586,6 +602,7 @@ def extract_image_features(image):
 def analyze_phone_condition(image, features):
     """Analyze phone condition based on image features"""
     
+    # Screen condition assessment
     if features['edge_density'] > 0.15:
         screen_condition = "⚠️ Potential scratches/cracks detected"
         screen_score = 60
@@ -596,6 +613,7 @@ def analyze_phone_condition(image, features):
         screen_condition = "✨ Screen in excellent condition"
         screen_score = 90
     
+    # Body condition assessment
     if features['uniformity'] < 0.6:
         body_condition = "🔄 Visible wear on body"
         body_score = 65
@@ -606,11 +624,13 @@ def analyze_phone_condition(image, features):
         body_condition = "🌟 Body looks like new"
         body_score = 95
     
+    # Image quality assessment
     if features['sharpness'] < 50:
         image_quality = "📷 Image quality is low, consider retaking the photo"
     else:
         image_quality = "✅ Image is clear, accurate assessment possible"
     
+    # Overall score
     overall_score = int((screen_score + body_score) / 2)
     
     return {
@@ -623,8 +643,10 @@ def analyze_phone_condition(image, features):
     }
 
 if uploaded_file is not None:
+    # Load and display image
     image = Image.open(uploaded_file)
     
+    # Resize image for display
     max_size = 400
     if image.width > max_size or image.height > max_size:
         ratio = min(max_size / image.width, max_size / image.height)
@@ -640,9 +662,12 @@ if uploaded_file is not None:
         st.markdown("### 🔍 AI Vision Analysis Results")
         
         with st.spinner("Analyzing image..."):
+            # Extract features
             features = extract_image_features(image)
+            # Analyze condition
             analysis = analyze_phone_condition(image, features)
         
+        # Display analysis results
         st.markdown(f"""
         <div style="background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
             <p><strong>📱 Screen Condition:</strong> {analysis['screen_condition']}</p>
@@ -651,9 +676,11 @@ if uploaded_file is not None:
         </div>
         """, unsafe_allow_html=True)
         
+        # Progress bar for overall score
         st.progress(analysis['overall_score'] / 100)
         st.metric("📊 Overall Condition Score", f"{analysis['overall_score']}/100")
         
+        # Recommendations based on score
         if analysis['overall_score'] >= 85:
             st.success("✅ Phone is in excellent condition! Can be listed as 'Like New' or 'Minor signs of use'")
             price_adjustment = "+5%"
@@ -664,8 +691,10 @@ if uploaded_file is not None:
             st.warning("⚠️ Phone shows significant wear, consider lowering price for faster sale")
             price_adjustment = "-10%"
         
+        # Price adjustment recommendation
         st.caption(f"💡 Based on image analysis, suggested price adjustment: {price_adjustment}")
         
+        # Optional: Show detailed image metrics (for debugging)
         with st.expander("📊 Detailed Image Metrics"):
             st.json({
                 "Brightness": f"{features['brightness']:.1f}",
@@ -690,6 +719,7 @@ st.header("📈 Market Insights & Trends")
 col1, col2 = st.columns(2)
 
 with col1:
+    # Price trend by storage
     storage_trend = filtered_df.groupby('Storage_GB')['Price'].agg(['mean', 'count']).reset_index()
     storage_trend = storage_trend[storage_trend['count'] > 5]
     
@@ -702,7 +732,8 @@ with col1:
     st.plotly_chart(fig_trend, use_container_width=True)
 
 with col2:
-    brand_condition = filtered_df.groupby(['Brand', pd.cut(filtered_df['Condition_Percentage'], 
+    # Condition vs price by brand
+    brand_condition = filtered_df.groupby(['Brand', pd.cut(filtered_df['Condition_Score'], 
                                                            bins=[0, 70, 85, 100], 
                                                            labels=['Poor', 'Good', 'Excellent'])]).size().unstack()
     
@@ -715,6 +746,7 @@ with col2:
     )
     st.plotly_chart(fig_condition_stack, use_container_width=True)
 
+# Depreciation analysis
 st.subheader("📉 Value Depreciation Analysis")
 
 depreciation = filtered_df.groupby('Months_Since_Release')['Value_Retention'].mean().reset_index()
@@ -735,11 +767,12 @@ st.sidebar.markdown("---")
 st.sidebar.header("💾 Export Data")
 
 if st.sidebar.button("📥 Download Predictions"):
+    # Create export dataframe
     export_df = pd.DataFrame({
         'Model': list(predictions.keys()),
         'Predicted_Price_HKD': list(predictions.values())
     })
-    export_df.loc[len(export_df)] = ['Ensemble', ensemble_pred]
+    export_df.loc[len(export_df)] = ['Ensemble (Average)', ensemble_pred]
     
     csv = export_df.to_csv(index=False)
     st.sidebar.download_button(
@@ -751,20 +784,14 @@ if st.sidebar.button("📥 Download Predictions"):
 
 # Footer
 st.sidebar.markdown("---")
-st.sidebar.markdown("""
+st.sidebar.markdown(f"""
 ### 📱 System Info
-- **Total Listings:** {:,}
-- **Brands:** {}
-- **Avg Price:** HK${:,.0f}
-- **Best Model:** {}
-- **R² (log scale):** {:.3f}
-""".format(
-    len(df),
-    df['Brand'].nunique(),
-    df['Price'].mean(),
-    best_model_name,
-    model_results[best_model_name]['r2_log']
-))
+- **Total Listings:** {len(df):,}
+- **Brands:** {df['Brand'].nunique()}
+- **Avg Price:** HK${df['Price'].mean():,.0f}
+- **Best Model:** {best_model_name}
+- **R² Score:** {best_r2:.4f}
+""")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
@@ -776,5 +803,6 @@ st.sidebar.markdown("""
 - 💾 Export Predictions
 """)
 
+# Main execution
 if __name__ == "__main__":
     pass
