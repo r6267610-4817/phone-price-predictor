@@ -259,7 +259,6 @@ with tab3:
 
 # ==================== Machine Learning Model ====================
 st.header("🤖 Price Prediction Model")
-
 @st.cache_resource
 def train_models():
     """Train optimized models - EXACTLY matching ipynb parameters"""
@@ -281,7 +280,7 @@ def train_models():
         max_depth=3,
         random_state=42
     )
-    gb.fit(X_train_scaled, y_train)
+    gb.fit(X_train_scaled, y_train)  # y_train is log(Price + 1)
     
     # Random Forest - EXACT parameters from ipynb (R2_Log: 0.4256)
     rf = RandomForestRegressor(
@@ -305,16 +304,16 @@ def train_models():
     
     results = {}
     for name, model in models.items():
-        y_pred_log = model.predict(X_test_scaled)
-        # Convert from log scale back to original price for error metrics
+        y_pred_log = model.predict(X_test_scaled)  # Predictions on log scale
+        # Convert from log scale back to original price
         y_pred_original = np.expm1(y_pred_log)
         y_test_original = np.expm1(y_test)
         
-        # Compute metrics on LOG scale (as in ipynb for R2)
-        r2_log = r2_score(y_test, y_pred_log)
+        # CRITICAL: R² is computed on LOG scale (matching ipynb)
+        r2_log = r2_score(y_test, y_pred_log)  # y_test is log(Price + 1)
         rmse_log = np.sqrt(mean_squared_error(y_test, y_pred_log))
         
-        # Compute metrics on ORIGINAL scale
+        # Original scale metrics (for practical interpretation)
         rmse_original = np.sqrt(mean_squared_error(y_test_original, y_pred_original))
         mae_original = mean_absolute_error(y_test_original, y_pred_original)
         
@@ -326,7 +325,7 @@ def train_models():
             'rmse_log': rmse_log,
             'predictions_log': y_pred_log,
             'actual_log': y_test.values,
-            'feature_names': feature_names_list  # Store feature names with each model
+            'feature_names': feature_names_list
         }
     
     return results, scaler, feature_names_list, X_test, y_test
