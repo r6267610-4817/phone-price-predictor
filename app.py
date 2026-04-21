@@ -19,6 +19,8 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.decomposition import PCA
 import warnings
+import joblib
+import pickle
 warnings.filterwarnings('ignore')
 
 # Image processing
@@ -134,17 +136,41 @@ def prepare_features(df):
     X = X.replace([np.inf, -np.inf], np.nan)
     X = X.fillna(X.median())
     
-    # Target: log(Price + 1) as per notebook analysis
-    y_log = np.log1p(df['Price'])
-    
-    return X, y_log, selected_features
+    return X, selected_features
+
+# Load saved models
+@st.cache_resource
+def load_saved_models():
+    """Load pre-trained models from ipynb"""
+    try:
+        model = joblib.load('gradient_boosting_model.pkl')
+        scaler = joblib.load('scaler.pkl')
+        with open('feature_names.pkl', 'rb') as f:
+            feature_names = pickle.load(f)
+        with open('model_metrics.pkl', 'rb') as f:
+            model_metrics = pickle.load(f)
+        
+        return model, scaler, feature_names, model_metrics
+    except FileNotFoundError as e:
+        st.error(f"模型文件未找到: {e}")
+        st.info("请先在 ipynb 中运行模型保存代码，生成以下文件：\n"
+                "- gradient_boosting_model.pkl\n"
+                "- scaler.pkl\n"
+                "- feature_names.pkl\n"
+                "- model_metrics.pkl")
+        st.stop()
+        return None, None, None, None
 
 # Load data
 with st.spinner("Loading and processing data..."):
     df = load_and_preprocess_data()
-    X, y_log, selected_features = prepare_features(df)
+    X, selected_features = prepare_features(df)
 
 st.success(f"✅ Data loaded successfully! {len(df):,} listings analyzed")
+
+# Load saved models
+with st.spinner("Loading pre-trained AI models..."):
+    best_model, scaler, feature_names, model_metrics = load_saved_models()
 
 # ==================== Sidebar Filters ====================
 st.sidebar.header("🔍 Data Filters")
@@ -257,101 +283,24 @@ with tab3:
             )
             st.plotly_chart(fig_condition, use_container_width=True)
 
-# ==================== Machine Learning Model ====================
+# ==================== Model Performance Display ====================
 st.header("🤖 Price Prediction Model")
-@st.cache_resource
-def train_models():
-    """Train optimized models - EXACTLY matching ipynb parameters"""
-    # Split data with same random_state as ipynb
-    X_train, X_test, y_train, y_test = train_test_split(X, y_log, test_size=0.2, random_state=42)
-    
-    # Store feature names
-    feature_names_list = X.columns.tolist()
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    
-    # Gradient Boosting - EXACT parameters from ipynb (R2_Log: 0.4383)
-    gb = GradientBoostingRegressor(
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=42
-    )
-    gb.fit(X_train_scaled, y_train)  # y_train is log(Price + 1)
-    
-    # Random Forest - EXACT parameters from ipynb (R2_Log: 0.4256)
-    rf = RandomForestRegressor(
-        n_estimators=500,
-        min_samples_leaf=3,
-        random_state=42,
-        n_jobs=-1
-    )
-    rf.fit(X_train_scaled, y_train)
-    
-    # Ridge Regression
-    ridge = Ridge(alpha=1.0)
-    ridge.fit(X_train_scaled, y_train)
-    
-    # Make predictions and compute metrics
-    models = {
-        'Gradient Boosting': gb,
-        'Random Forest': rf,
-        'Ridge Regression': ridge
-    }
-    
-    results = {}
-    for name, model in models.items():
-        y_pred_log = model.predict(X_test_scaled)  # Predictions on log scale
-        # Convert from log scale back to original price
-        y_pred_original = np.expm1(y_pred_log)
-        y_test_original = np.expm1(y_test)
-        
-        # CRITICAL: R² is computed on LOG scale (matching ipynb)
-        r2_log = r2_score(y_test, y_pred_log)  # y_test is log(Price + 1)
-        rmse_log = np.sqrt(mean_squared_error(y_test, y_pred_log))
-        
-        # Original scale metrics (for practical interpretation)
-        rmse_original = np.sqrt(mean_squared_error(y_test_original, y_pred_original))
-        mae_original = mean_absolute_error(y_test_original, y_pred_original)
-        
-        results[name] = {
-            'model': model,
-            'rmse_original': rmse_original,
-            'mae_original': mae_original,
-            'r2_log': r2_log,
-            'rmse_log': rmse_log,
-            'predictions_log': y_pred_log,
-            'actual_log': y_test.values,
-            'feature_names': feature_names_list
-        }
-    
-    return results, scaler, feature_names_list, X_test, y_test
 
-with st.spinner("Training AI models..."):
-    model_results, scaler, feature_names, X_test, y_test = train_models()
+st.subheader("📊 Model Performance (from Notebook)")
 
-# Display model performance metrics (matching ipynb)
-st.subheader("📊 Model Performance Comparison")
+# Display metrics from saved model
+gb_metrics = model_metrics.get('Gradient Boosting', {})
 
-# Create comparison table matching ipynb format
-comparison_data = []
-for name, results in model_results.items():
-    comparison_data.append({
-        'Model': name,
-        'Feature_Count': len(feature_names),
-        'R2_Log': results['r2_log'],
-        'RMSE_Log': results['rmse_log'],
-        'RMSE_Original': results['rmse_original'],
-        'MAE_Original': results['mae_original']
-    })
+comparison_data = [{
+    'Model': 'Gradient Boosting',
+    'Feature_Count': len(feature_names),
+    'R2_Log': gb_metrics.get('r2_log', 0.4383),
+    'RMSE_Log': gb_metrics.get('rmse_log', 1.1303),
+    'RMSE_Original': gb_metrics.get('rmse_original', 2523.6),
+    'MAE_Original': gb_metrics.get('mae_original', 1356.1)
+}]
 
 comparison_df = pd.DataFrame(comparison_data)
-comparison_df = comparison_df.sort_values('R2_Log', ascending=False)
-
-# Format numeric columns
 comparison_df['R2_Log'] = comparison_df['R2_Log'].round(4)
 comparison_df['RMSE_Log'] = comparison_df['RMSE_Log'].round(4)
 comparison_df['RMSE_Original'] = comparison_df['RMSE_Original'].round(1)
@@ -359,37 +308,26 @@ comparison_df['MAE_Original'] = comparison_df['MAE_Original'].round(1)
 
 st.dataframe(comparison_df, use_container_width=True, hide_index=True)
 
-# Highlight best model
-best_model_name = comparison_df.loc[0, 'Model']
 best_r2 = comparison_df.loc[0, 'R2_Log']
-st.success(f"🏆 Best model: **{best_model_name}** with R² = **{best_r2:.4f}** on log scale (matching notebook results)")
+st.success(f"🏆 Model: **Gradient Boosting** with R² = **{best_r2:.4f}** on log scale (from notebook)")
 
-# Feature importance for Gradient Boosting (best model)
-best_model = model_results[best_model_name]['model']
-best_model_features = model_results[best_model_name].get('feature_names', feature_names)
-
-# Ensure feature_names and importance have same length
-importance_values = best_model.feature_importances_
-
-if len(best_model_features) == len(importance_values):
-    feature_importance_df = pd.DataFrame({
-        'Feature': best_model_features,
-        'Importance': importance_values
-    }).sort_values('Importance', ascending=False)
-    
-    fig_importance = px.bar(
-        feature_importance_df.head(15),
-        x='Importance', y='Feature',
-        orientation='h', title=f'Feature Importance - {best_model_name}',
-        color='Importance', color_continuous_scale='Viridis'
-    )
-    fig_importance.update_layout(height=400)
-    st.plotly_chart(fig_importance, use_container_width=True)
-else:
-    st.warning(f"Feature importance display skipped: feature count ({len(best_model_features)}) vs importance count ({len(importance_values)})")
-    # Debug info
-    st.write(f"Feature names: {best_model_features}")
-    st.write(f"Importance length: {len(importance_values)}")
+# Feature importance (if available from saved model)
+if hasattr(best_model, 'feature_importances_'):
+    importance_values = best_model.feature_importances_
+    if len(feature_names) == len(importance_values):
+        feature_importance_df = pd.DataFrame({
+            'Feature': feature_names,
+            'Importance': importance_values
+        }).sort_values('Importance', ascending=False)
+        
+        fig_importance = px.bar(
+            feature_importance_df,
+            x='Importance', y='Feature',
+            orientation='h', title='Feature Importance - Gradient Boosting',
+            color='Importance', color_continuous_scale='Viridis'
+        )
+        fig_importance.update_layout(height=400)
+        st.plotly_chart(fig_importance, use_container_width=True)
 
 st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
 
@@ -407,7 +345,8 @@ condition_default = int(df['Condition_Score'].median()) if len(df) > 0 else 85
 
 with col1:
     brand_input = st.selectbox("Brand", options=df['Brand'].unique(), index=0)
-    storage_input = st.selectbox("Storage (GB)", options=sorted(df['Storage_GB'].unique()), index=3 if 256 in df['Storage_GB'].unique() else 0)
+    storage_input = st.selectbox("Storage (GB)", options=sorted(df['Storage_GB'].unique()), 
+                                  index=sorted(df['Storage_GB'].unique()).index(256) if 256 in df['Storage_GB'].unique() else 0)
     condition_input = st.slider("Condition Score (0-100)", 0, 100, condition_default)
 
 with col2:
@@ -443,39 +382,25 @@ def prepare_prediction_input():
 input_features = prepare_prediction_input()
 input_scaled = scaler.transform(input_features)
 
-# Get predictions from all models
-predictions = {}
-for name, results in model_results.items():
-    pred_log = results['model'].predict(input_scaled)[0]
-    pred_original = np.expm1(pred_log)
-    predictions[name] = pred_original
+# Get prediction from saved model
+pred_log = best_model.predict(input_scaled)[0]
+pred_original = np.expm1(pred_log)
 
-# Display predictions
-st.subheader("📈 AI Price Predictions")
-
-pred_cols = st.columns(len(predictions))
-for i, (name, pred) in enumerate(predictions.items()):
-    with pred_cols[i]:
-        badge = "🏆" if name == best_model_name else "📊"
-        st.markdown(f"""
-        <div class="prediction-card">
-            <h3>{badge} {name}</h3>
-            <h2 style="color: #667eea;">HK${pred:,.0f}</h2>
-            <p>R² (log): {model_results[name]['r2_log']:.3f}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-# Ensemble prediction (simple average for consistency)
-ensemble_pred = np.mean(list(predictions.values()))
+# Display prediction
+st.subheader("📈 AI Price Prediction")
 
 st.markdown(f"""
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-            padding: 2rem; border-radius: 1rem; text-align: center; margin-top: 1rem;">
-    <h3 style="color: white;">🎯 Ensemble Prediction (Average of All Models)</h3>
-    <h1 style="color: white; font-size: 3rem;">HK${ensemble_pred:,.0f}</h1>
-    <p style="color: white;">Based on {len(predictions)} AI models</p>
+            padding: 2rem; border-radius: 1rem; text-align: center;">
+    <h3 style="color: white;">🎯 Gradient Boosting Prediction</h3>
+    <h1 style="color: white; font-size: 3rem;">HK${pred_original:,.0f}</h1>
+    <p style="color: white;">R² (log scale): {best_r2:.4f} | MAE: HK${gb_metrics.get('mae_original', 1356):,.0f}</p>
 </div>
 """, unsafe_allow_html=True)
+
+# Price range based on MAE
+mae = gb_metrics.get('mae_original', 1356)
+st.info(f"📊 Predicted price range (±MAE): HK${pred_original - mae:,.0f} ~ HK${pred_original + mae:,.0f}")
 
 # ==================== AI LLM Integration ====================
 st.header("🤖 AI Assistant - Smart Recommendations")
@@ -490,10 +415,10 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
         with col1:
             # Price position analysis
             brand_avg = filtered_df[filtered_df['Brand']==brand_input]['Price'].mean()
-            if ensemble_pred > brand_avg * 1.1:
-                st.info(f"📈 This device is priced **{((ensemble_pred/brand_avg)-1)*100:.0f}% above** the average {brand_input} price")
-            elif ensemble_pred < brand_avg * 0.9:
-                st.success(f"📉 This device is priced **{(1 - ensemble_pred/brand_avg)*100:.0f}% below** the average {brand_input} price")
+            if pred_original > brand_avg * 1.1:
+                st.info(f"📈 This device is priced **{((pred_original/brand_avg)-1)*100:.0f}% above** the average {brand_input} price")
+            elif pred_original < brand_avg * 0.9:
+                st.success(f"📉 This device is priced **{(1 - pred_original/brand_avg)*100:.0f}% below** the average {brand_input} price")
             else:
                 st.info(f"📊 This device is priced **around market average** for {brand_input}")
         
@@ -518,9 +443,9 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     if warranty_input == "Yes" and months_input < 12:
         recommendations.append("📋 Device has warranty - highlight this in your listing")
     if len(filtered_df) > 0:
-        if ensemble_pred > filtered_df['Price'].quantile(0.75):
+        if pred_original > filtered_df['Price'].quantile(0.75):
             recommendations.append("💰 Premium pricing range - target collectors or brand enthusiasts")
-        elif ensemble_pred < filtered_df['Price'].quantile(0.25):
+        elif pred_original < filtered_df['Price'].quantile(0.25):
             recommendations.append("🎯 Great value deal - quick sale expected if priced competitively")
     
     if not recommendations:
@@ -529,12 +454,12 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     for rec in recommendations:
         st.write(rec)
     
-    # Analysis based on best model
+    # Analysis based on prediction
     st.markdown("### 🧠 AI Deep Analysis")
     
-    if ensemble_pred > 8000:
+    if pred_original > 8000:
         analysis = "This is a premium-tier device. The high price reflects strong brand value and likely good condition. Consider highlighting unique features and providing detailed photos to justify the price point."
-    elif ensemble_pred > 4000:
+    elif pred_original > 4000:
         analysis = "Mid-range pricing detected. This segment is highly competitive. Emphasize battery health, included accessories, and any remaining warranty to stand out from similar listings."
     else:
         analysis = "Budget-friendly pricing. Focus on value proposition - good condition, functional device at an accessible price point. Quick sale expected in this segment."
@@ -768,45 +693,24 @@ if len(filtered_df) > 0:
         fig_depreciation.update_traces(marker=dict(size=8, color='#667eea'))
         st.plotly_chart(fig_depreciation, use_container_width=True)
 
-# ==================== Download Predictions ====================
-st.sidebar.markdown("---")
-st.sidebar.header("💾 Export Data")
-
-if st.sidebar.button("📥 Download Predictions"):
-    # Create export dataframe
-    export_df = pd.DataFrame({
-        'Model': list(predictions.keys()),
-        'Predicted_Price_HKD': list(predictions.values())
-    })
-    export_df.loc[len(export_df)] = ['Ensemble (Average)', ensemble_pred]
-    
-    csv = export_df.to_csv(index=False)
-    st.sidebar.download_button(
-        label="📊 Download as CSV",
-        data=csv,
-        file_name="phone_price_predictions.csv",
-        mime="text/csv"
-    )
-
-# Footer
+# ==================== Footer ====================
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"""
 ### 📱 System Info
 - **Total Listings:** {len(df):,}
 - **Brands:** {df['Brand'].nunique()}
 - **Avg Price:** HK${df['Price'].mean():,.0f}
-- **Best Model:** {best_model_name}
+- **Best Model:** Gradient Boosting
 - **R² Score:** {best_r2:.4f}
 """)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
 ### 🚀 Features
-- 🤖 Multi-Model AI Prediction
+- 🤖 AI-Powered Price Prediction
 - 📸 Image-based Condition Analysis
-- 🧠 AI-Powered Recommendations
+- 🧠 Smart Recommendations
 - 📊 Real-time Market Analytics
-- 💾 Export Predictions
 """)
 
 # Main execution
