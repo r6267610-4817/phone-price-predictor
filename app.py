@@ -80,7 +80,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ==================== 数据加载和预处理 ====================
+# ==================== Data loading and preprocessing ====================
 @st.cache_data
 def load_and_preprocess_data():
     """Load and preprocess the Carousell dataset"""
