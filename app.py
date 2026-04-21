@@ -80,18 +80,17 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ==================== Data Loading and Preprocessing ====================
+# ==================== 数据加载和预处理 ====================
 @st.cache_data
 def load_and_preprocess_data():
     """Load and preprocess the Carousell dataset"""
-    # Read the CSV data
     df = pd.read_csv('carousell_regression_numeric_y_price_add_storage.csv')
     
     # Clean price column - remove extreme outliers
     df = df[(df['Price'] > 0) & (df['Price'] < 100000)]
     df = df[df['Original_Price_HKD'] > 0]
     
-    # Remove extreme outliers
+    # Remove extreme outliers using IQR method (as in notebook)
     Q1 = df['Price'].quantile(0.01)
     Q3 = df['Price'].quantile(0.99)
     df = df[(df['Price'] >= Q1) & (df['Price'] <= Q3)]
@@ -110,13 +109,8 @@ def load_and_preprocess_data():
     df['Value_Retention'] = (df['Price'] / df['Original_Price_HKD']) * 100
     df['Value_Retention'] = df['Value_Retention'].clip(0, 150)
     
-    # Create condition score (normalized)
     df['Normalized_Condition'] = df['Condition_Percentage'] / 100
-    
-    # Battery health score
     df['Battery_Health_Norm'] = df['Battery_Health_Percent'] / 100
-    
-    # Seller reputation
     df['Seller_Reputation_Norm'] = np.log1p(df['seller_reviews_count'])
     
     # Brand encoding
@@ -127,41 +121,47 @@ def load_and_preprocess_data():
 
 @st.cache_data
 def prepare_features(df):
-    """Prepare features for machine learning"""
-    feature_cols = [
-        'Storage_GB', 'Months_Since_Release', 'Condition_Percentage',
-        'Condition_Score', 'Battery_Health_Percent', 'Battery_Cycle_Count',
-        'Seller_Years', 'Days_Since_Posted', 'image_count',
-        'seller_reviews_count', 'Description_Length',
-        'Price_Discount_Pct', 'Age_Months', 'Price_per_GB', 'Value_Retention'
+    """Prepare features for machine learning - using top features from consensus ranking"""
+    # Selected features with Average_Rank < 10 from consensus feature ranking
+    selected_features = [
+        'Months_Since_Release',
+        'Condition_Score', 
+        'Storage_GB',
+        'Product_Origin_Unknown',
+        'Is_Premium_Tier',
+        'Post_Recency_Log',
+        'Days_Since_Posted',
+        'Original_Price_HKD',
+        'Brand_Apple'
     ]
     
-    # Add binary features
+    # Add binary features for completeness
     binary_cols = ['Is_Working', 'Is_MTR_Trade', 'Has_Warranty', 'Has_Box',
                    'Has_Receipt', 'Has_Accessories', 'Is_Firm_Price',
-                   'Is_Urgent_Sale', 'Is_Premium_Tier', 'Has_Repair_History',
-                   'Has_Crack_Or_Line', 'Has_Dual_SIM', 'Has_Brand_Keyword_Mismatch']
+                   'Is_Urgent_Sale', 'Has_Repair_History', 'Has_Crack_Or_Line',
+                   'Has_Dual_SIM', 'Has_Brand_Keyword_Mismatch']
     
-    feature_cols.extend(binary_cols)
-    
-    # Add brand dummies
+    # Add brand dummies for other brands (not in selected features)
     brand_dummies = pd.get_dummies(df['Brand'], prefix='Brand')
+    # Keep only non-Apple brand dummies since Brand_Apple is already selected
+    other_brand_cols = [col for col in brand_dummies.columns if col != 'Brand_Apple']
     
-    X = df[feature_cols].copy()
-    X = pd.concat([X, brand_dummies], axis=1)
+    X = df[selected_features].copy()
+    X = pd.concat([X, df[binary_cols], brand_dummies[other_brand_cols]], axis=1)
     
     # Handle infinity and NaN
     X = X.replace([np.inf, -np.inf], np.nan)
     X = X.fillna(X.median())
     
-    y = df['Price']
+    # Target: log(Price + 1) as per notebook analysis
+    y_log = np.log1p(df['Price'])
     
-    return X, y, feature_cols
+    return X, y_log, selected_features
 
 # Load data
 with st.spinner("Loading and processing data..."):
     df = load_and_preprocess_data()
-    X, y, feature_cols = prepare_features(df)
+    X, y_log, selected_features = prepare_features(df)
 
 st.success(f"✅ Data loaded successfully! {len(df)} listings analyzed")
 
@@ -273,84 +273,93 @@ with tab3:
         st.plotly_chart(fig_condition, use_container_width=True)
 
 # ==================== Machine Learning Model ====================
-st.header("🤖 AI Price Prediction Model")
+st.header("🤖 Price Prediction Model")
 
 @st.cache_resource
 def train_models():
-    """Train multiple ML models"""
+    """Train optimized models based on notebook analysis"""
     # Split data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y_log, test_size=0.2, random_state=42)
     
     # Scale features
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # Random Forest with hyperparameter tuning
-    rf_params = {
-        'n_estimators': [100, 200],
-        'max_depth': [10, 15, 20],
-        'min_samples_split': [5, 10],
-        'min_samples_leaf': [2, 4]
-    }
-    rf = RandomForestRegressor(random_state=42, n_jobs=-1)
-    rf_grid = GridSearchCV(rf, rf_params, cv=3, scoring='r2', n_jobs=-1)
-    rf_grid.fit(X_train_scaled, y_train)
-    rf_best = rf_grid.best_estimator_
-    
-    # Gradient Boosting
-    gb = GradientBoostingRegressor(n_estimators=150, max_depth=8, 
-                                   learning_rate=0.05, random_state=42)
+    # Gradient Boosting - Best model from notebook (R2_Log: 0.4383)
+    gb = GradientBoostingRegressor(
+        n_estimators=300,
+        learning_rate=0.05,
+        max_depth=3,
+        random_state=42
+    )
     gb.fit(X_train_scaled, y_train)
     
-    # Ridge Regression
-    ridge = Ridge(alpha=1.0)
+    # Random Forest - Second best model (R2_Log: 0.4256)
+    rf = RandomForestRegressor(
+        n_estimators=500,
+        min_samples_leaf=3,
+        random_state=42,
+        n_jobs=-1
+    )
+    rf.fit(X_train_scaled, y_train)
+    
+    # Ridge Regression with cross-validation
+    ridge = RidgeCV(alphas=np.logspace(-3, 3, 50))
     ridge.fit(X_train_scaled, y_train)
     
     # Make predictions
     models = {
-        'Random Forest': rf_best,
         'Gradient Boosting': gb,
+        'Random Forest': rf,
         'Ridge Regression': ridge
     }
     
     results = {}
     for name, model in models.items():
         y_pred = model.predict(X_test_scaled)
+        # Convert from log scale back to original price for error metrics
+        y_pred_original = np.expm1(y_pred)
+        y_test_original = np.expm1(y_test)
+        
         results[name] = {
             'model': model,
-            'rmse': np.sqrt(mean_squared_error(y_test, y_pred)),
-            'mae': mean_absolute_error(y_test, y_pred),
-            'r2': r2_score(y_test, y_pred),
+            'rmse': np.sqrt(mean_squared_error(y_test_original, y_pred_original)),
+            'mae': mean_absolute_error(y_test_original, y_pred_original),
+            'r2_log': r2_score(y_test, y_pred),  # R² on log scale
             'predictions': y_pred,
             'actual': y_test.values
         }
     
-    return results, scaler, X.columns.tolist()
+    return results, scaler, selected_features
 
 with st.spinner("Training AI models..."):
     model_results, scaler, feature_names = train_models()
 
 # Model comparison
-st.subheader("📊 Model Performance Comparison")
+st.subheader("📊 Model Performance Comparison (Based on Notebook Analysis)")
 
 col1, col2, col3 = st.columns(3)
 for i, (name, results) in enumerate(model_results.items()):
     with [col1, col2, col3][i]:
+        # Determine badge based on performance
+        badge = "🥇 Best" if name == "Gradient Boosting" else "🥈" if name == "Random Forest" else "📊"
         st.markdown(f"""
         <div class="metric-card">
-            <h3>{name}</h3>
+            <h3>{badge} {name}</h3>
             <p>RMSE: <b>HK${results['rmse']:.0f}</b></p>
             <p>MAE: <b>HK${results['mae']:.0f}</b></p>
-            <p>R²: <b>{results['r2']:.3f}</b></p>
+            <p>R² (log scale): <b>{results['r2_log']:.3f}</b></p>
         </div>
         """, unsafe_allow_html=True)
 
-# Feature importance
-best_model_name = max(model_results, key=lambda x: model_results[x]['r2'])
+# Feature importance for Gradient Boosting (best model)
+best_model_name = "Gradient Boosting"  # Best model from notebook
 best_model = model_results[best_model_name]['model']
 
 if hasattr(best_model, 'feature_importances_'):
+    # Get feature importances for all features (scaled features)
+    # We need to map back to original feature names
     feature_importance = pd.DataFrame({
         'Feature': feature_names,
         'Importance': best_model.feature_importances_
@@ -363,6 +372,9 @@ if hasattr(best_model, 'feature_importances_'):
     )
     fig_importance.update_layout(height=500)
     st.plotly_chart(fig_importance, use_container_width=True)
+    
+    # Add note about consensus feature selection
+    st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
 
 # ==================== Interactive Price Prediction ====================
 st.header("🎯 Interactive Price Predictor")
@@ -386,28 +398,30 @@ with col3:
     accessories_input = st.selectbox("Has Accessories?", ["Yes", "No"])
     repair_input = st.selectbox("Has Repair History?", ["No", "Yes"])
 
-# Prepare input features
+# Prepare input features based on selected features
 def prepare_prediction_input():
     input_dict = {}
     
-    # Numerical features
+    # Numerical features (based on selected_features)
     for feat in feature_names:
         if feat == 'Storage_GB':
             input_dict[feat] = storage_input
         elif feat == 'Months_Since_Release':
             input_dict[feat] = months_input
-        elif feat == 'Condition_Percentage':
-            input_dict[feat] = condition_input
+        elif feat == 'Condition_Score':
+            input_dict[feat] = condition_input  # Using condition as proxy
         elif feat == 'Battery_Health_Percent':
             input_dict[feat] = battery_input
-        elif feat == 'Price_Discount_Pct':
-            input_dict[feat] = 30  # Default
-        elif feat == 'Age_Months':
-            input_dict[feat] = months_input
-        elif feat == 'Price_per_GB':
-            input_dict[feat] = 50  # Default
-        elif feat == 'Value_Retention':
-            input_dict[feat] = 70  # Default
+        elif feat == 'Original_Price_HKD':
+            input_dict[feat] = df['Original_Price_HKD'].median()
+        elif feat == 'Post_Recency_Log':
+            input_dict[feat] = df['Post_Recency_Log'].median()
+        elif feat == 'Days_Since_Posted':
+            input_dict[feat] = df['Days_Since_Posted'].median()
+        elif feat == 'Product_Origin_Unknown':
+            input_dict[feat] = 1 if df['Product_Origin_Unknown'].mode()[0] == 1 else 0
+        elif feat == 'Is_Premium_Tier':
+            input_dict[feat] = 1 if df['Is_Premium_Tier'].mode()[0] == 1 else 0
         elif feat.startswith('Brand_'):
             input_dict[feat] = 1 if feat == f'Brand_{brand_input}' else 0
         elif feat in ['Has_Warranty', 'Has_Box', 'Has_Accessories', 
@@ -415,7 +429,6 @@ def prepare_prediction_input():
                       'Has_Receipt', 'Is_Firm_Price', 'Is_Urgent_Sale',
                       'Is_Premium_Tier', 'Has_Crack_Or_Line', 'Has_Dual_SIM',
                       'Has_Brand_Keyword_Mismatch']:
-            # Binary features - set defaults
             input_dict[feat] = 0
         else:
             # Use median from training data
@@ -439,8 +452,9 @@ input_scaled = scaler.transform(input_features)
 # Get predictions from all models
 predictions = {}
 for name, results in model_results.items():
-    pred = results['model'].predict(input_scaled)[0]
-    predictions[name] = pred
+    pred_log = results['model'].predict(input_scaled)[0]
+    pred_original = np.expm1(pred_log)  # Convert from log scale
+    predictions[name] = pred_original
 
 # Display predictions
 st.subheader("📈 AI Price Predictions")
@@ -448,22 +462,26 @@ st.subheader("📈 AI Price Predictions")
 pred_cols = st.columns(len(predictions))
 for i, (name, pred) in enumerate(predictions.items()):
     with pred_cols[i]:
+        badge = "🏆" if name == "Gradient Boosting" else "📊"
         st.markdown(f"""
         <div class="prediction-card">
-            <h3>{name}</h3>
+            <h3>{badge} {name}</h3>
             <h2 style="color: #667eea;">HK${pred:,.0f}</h2>
-            <p>Confidence: {(model_results[name]['r2'] * 100):.0f}%</p>
+            <p>R² (log scale): {(model_results[name]['r2_log'] * 100):.0f}%</p>
         </div>
         """, unsafe_allow_html=True)
 
-# Ensemble prediction
-ensemble_pred = np.mean(list(predictions.values()))
+# Ensemble prediction (weighted by R² scores)
+weights = {name: results['r2_log'] for name, results in model_results.items()}
+total_weight = sum(weights.values())
+ensemble_pred = sum(predictions[name] * weights[name] / total_weight for name in predictions.keys())
+
 st.markdown(f"""
 <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
             padding: 2rem; border-radius: 1rem; text-align: center; margin-top: 1rem;">
-    <h3 style="color: white;">🎯 Ensemble Prediction (All Models)</h3>
+    <h3 style="color: white;">🎯 Weighted Ensemble Prediction</h3>
     <h1 style="color: white; font-size: 3rem;">HK${ensemble_pred:,.0f}</h1>
-    <p style="color: white;">Based on {len(predictions)} AI models</p>
+    <p style="color: white;">Based on {len(predictions)} AI models (weighted by R²)</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -472,7 +490,7 @@ st.header("🤖 AI Assistant - Smart Recommendations")
 
 st.markdown("Get personalized buying/selling recommendations from our AI assistant")
 
-# Prepare context for LLM
+# Prepare context for recommendations
 def get_llm_recommendation():
     context = f"""
     Phone Specifications:
@@ -485,8 +503,8 @@ def get_llm_recommendation():
     - Has original box: {box_input}
     
     AI Price Predictions:
-    - Random Forest: HK${predictions.get('Random Forest', 0):,.0f}
     - Gradient Boosting: HK${predictions.get('Gradient Boosting', 0):,.0f}
+    - Random Forest: HK${predictions.get('Random Forest', 0):,.0f}
     - Ridge Regression: HK${predictions.get('Ridge Regression', 0):,.0f}
     - Ensemble: HK${ensemble_pred:,.0f}
     
@@ -525,7 +543,6 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     st.markdown("### 💡 Smart Recommendations")
     
-    # Generate recommendations based on analysis
     recommendations = []
     
     if condition_input < 70:
@@ -543,7 +560,7 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     for rec in recommendations:
         st.write(rec)
     
-    # LLM-powered analysis (simulated)
+    # Analysis based on best model
     st.markdown("### 🧠 AI Deep Analysis")
     
     if ensemble_pred > 8000:
@@ -568,7 +585,7 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     for tip in tips:
         st.write(tip)
-
+        
 # ==================== FIXED: Phone Condition Image Analysis ====================
 
 st.header("📸 Phone Condition Analysis (AI Vision Detection)")
