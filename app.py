@@ -154,7 +154,7 @@ with st.sidebar.expander("Filter Listings", expanded=False):
     brand_filter = st.multiselect(
         "Brand",
         options=df['Brand'].unique(),
-        default=df['Brand'].unique()[:3]
+        default=df['Brand'].unique()[:3] if len(df['Brand'].unique()) >= 3 else df['Brand'].unique()
     )
     
     price_range = st.slider(
@@ -183,76 +183,80 @@ filtered_df = filtered_df[(filtered_df['Price'] >= price_range[0]) &
 st.header("📊 Market Analysis Dashboard")
 
 # Key metrics
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    st.metric("Total Listings", f"{len(filtered_df):,}", 
-              delta=f"{len(filtered_df)/len(df)*100:.0f}% of total")
-with col2:
-    st.metric("Avg Price", f"HK${filtered_df['Price'].mean():,.0f}",
-              delta=f"${filtered_df['Price'].mean() - df['Price'].mean():.0f}")
-with col3:
-    st.metric("Avg Discount", f"{filtered_df['Price_Discount_Pct'].mean():.1f}%")
-with col4:
-    st.metric("Avg Condition", f"{filtered_df['Condition_Percentage'].mean():.1f}%")
+if len(filtered_df) > 0:
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Listings", f"{len(filtered_df):,}", 
+                  delta=f"{len(filtered_df)/len(df)*100:.0f}% of total")
+    with col2:
+        st.metric("Avg Price", f"HK${filtered_df['Price'].mean():,.0f}",
+                  delta=f"${filtered_df['Price'].mean() - df['Price'].mean():.0f}")
+    with col3:
+        st.metric("Avg Discount", f"{filtered_df['Price_Discount_Pct'].mean():.1f}%")
+    with col4:
+        st.metric("Avg Condition", f"{filtered_df['Condition_Percentage'].mean():.1f}%")
 
 # Charts
 tab1, tab2, tab3 = st.tabs(["📈 Price Distribution", "🏷️ Brand Analysis", "📉 Price Factors"])
 
 with tab1:
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_price = px.histogram(
-            filtered_df, x='Price', nbins=50,
-            title='Price Distribution',
-            color_discrete_sequence=['#667eea']
-        )
-        fig_price.update_layout(showlegend=False)
-        st.plotly_chart(fig_price, use_container_width=True)
-    
-    with col2:
-        fig_box = px.box(
-            filtered_df, x='Brand', y='Price',
-            title='Price by Brand',
-            color='Brand'
-        )
-        st.plotly_chart(fig_box, use_container_width=True)
+    if len(filtered_df) > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_price = px.histogram(
+                filtered_df, x='Price', nbins=50,
+                title='Price Distribution',
+                color_discrete_sequence=['#667eea']
+            )
+            fig_price.update_layout(showlegend=False)
+            st.plotly_chart(fig_price, use_container_width=True)
+        
+        with col2:
+            fig_box = px.box(
+                filtered_df, x='Brand', y='Price',
+                title='Price by Brand',
+                color='Brand'
+            )
+            st.plotly_chart(fig_box, use_container_width=True)
 
 with tab2:
-    brand_stats = filtered_df.groupby('Brand').agg({
-        'Price': ['mean', 'count', 'median'],
-        'Condition_Percentage': 'mean'
-    }).round(2)
-    brand_stats.columns = ['Avg Price', 'Count', 'Median Price', 'Avg Condition']
-    brand_stats = brand_stats.sort_values('Avg Price', ascending=False)
-    st.dataframe(brand_stats, use_container_width=True)
-    
-    fig_brand = px.bar(
-        brand_stats.reset_index(),
-        x='Brand', y='Avg Price',
-        title='Average Price by Brand',
-        color='Avg Price',
-        color_continuous_scale='Viridis'
-    )
-    st.plotly_chart(fig_brand, use_container_width=True)
+    if len(filtered_df) > 0:
+        brand_stats = filtered_df.groupby('Brand').agg({
+            'Price': ['mean', 'count', 'median'],
+            'Condition_Percentage': 'mean'
+        }).round(2)
+        brand_stats.columns = ['Avg Price', 'Count', 'Median Price', 'Avg Condition']
+        brand_stats = brand_stats.sort_values('Avg Price', ascending=False)
+        st.dataframe(brand_stats, use_container_width=True)
+        
+        fig_brand = px.bar(
+            brand_stats.reset_index(),
+            x='Brand', y='Avg Price',
+            title='Average Price by Brand',
+            color='Avg Price',
+            color_continuous_scale='Viridis'
+        )
+        st.plotly_chart(fig_brand, use_container_width=True)
 
 with tab3:
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_storage = px.box(
-            filtered_df, x='Storage_GB', y='Price',
-            title='Price vs Storage',
-            color='Storage_GB'
-        )
-        st.plotly_chart(fig_storage, use_container_width=True)
-    
-    with col2:
-        fig_condition = px.scatter(
-            filtered_df, x='Condition_Percentage', y='Price',
-            title='Price vs Condition',
-            color='Brand',
-            trendline='ols'
-        )
-        st.plotly_chart(fig_condition, use_container_width=True)
+    if len(filtered_df) > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            fig_storage = px.box(
+                filtered_df, x='Storage_GB', y='Price',
+                title='Price vs Storage',
+                color='Storage_GB'
+            )
+            st.plotly_chart(fig_storage, use_container_width=True)
+        
+        with col2:
+            fig_condition = px.scatter(
+                filtered_df, x='Condition_Percentage', y='Price',
+                title='Price vs Condition',
+                color='Brand',
+                trendline='ols'
+            )
+            st.plotly_chart(fig_condition, use_container_width=True)
 
 # ==================== Machine Learning Model ====================
 st.header("🤖 Price Prediction Model")
@@ -364,17 +368,24 @@ st.success(f"🏆 Best model: **{best_model_name}** with R² = **{best_r2:.4f}**
 # Feature importance for Gradient Boosting (best model)
 best_model = model_results[best_model_name]['model']
 
-fig_importance = px.bar(
-    pd.DataFrame({
+# Ensure feature_names and importance have same length
+importance_values = best_model.feature_importances_
+if len(feature_names) == len(importance_values):
+    feature_importance_df = pd.DataFrame({
         'Feature': feature_names,
-        'Importance': best_model.feature_importances_
-    }).sort_values('Importance', ascending=True),
-    x='Importance', y='Feature',
-    orientation='h', title=f'Feature Importance - {best_model_name}',
-    color='Importance', color_continuous_scale='Viridis'
-)
-fig_importance.update_layout(height=400)
-st.plotly_chart(fig_importance, use_container_width=True)
+        'Importance': importance_values
+    }).sort_values('Importance', ascending=False)
+    
+    fig_importance = px.bar(
+        feature_importance_df.head(15),
+        x='Importance', y='Feature',
+        orientation='h', title=f'Feature Importance - {best_model_name}',
+        color='Importance', color_continuous_scale='Viridis'
+    )
+    fig_importance.update_layout(height=400)
+    st.plotly_chart(fig_importance, use_container_width=True)
+else:
+    st.warning(f"Feature importance display skipped: feature count ({len(feature_names)}) vs importance count ({len(importance_values)})")
 
 st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
 
@@ -467,53 +478,32 @@ st.header("🤖 AI Assistant - Smart Recommendations")
 
 st.markdown("Get personalized buying/selling recommendations from our AI assistant")
 
-# Prepare context for recommendations
-def get_llm_recommendation():
-    context = f"""
-    Phone Specifications:
-    - Brand: {brand_input}
-    - Storage: {storage_input} GB
-    - Condition Score: {condition_input}
-    - Months since release: {months_input}
-    - Original price: HK${original_price_input:,.0f}
-    - Has warranty: {warranty_input}
-    
-    AI Price Predictions:
-    - {best_model_name}: HK${predictions.get(best_model_name, 0):,.0f}
-    - Ensemble: HK${ensemble_pred:,.0f}
-    
-    Market Context:
-    - Average price for {brand_input}: HK${filtered_df[filtered_df['Brand']==brand_input]['Price'].mean():,.0f}
-    - Typical discount rate: {filtered_df['Price_Discount_Pct'].mean():.1f}%
-    """
-    
-    return context
-
-recommendation_context = get_llm_recommendation()
-
 with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     st.markdown("### 📊 Market Analysis")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        # Price position analysis
-        brand_avg = filtered_df[filtered_df['Brand']==brand_input]['Price'].mean() if len(filtered_df[filtered_df['Brand']==brand_input]) > 0 else df['Price'].mean()
-        if ensemble_pred > brand_avg * 1.1:
-            st.info(f"📈 This device is priced **{((ensemble_pred/brand_avg)-1)*100:.0f}% above** the average {brand_input} price")
-        elif ensemble_pred < brand_avg * 0.9:
-            st.success(f"📉 This device is priced **{(1 - ensemble_pred/brand_avg)*100:.0f}% below** the average {brand_input} price")
-        else:
-            st.info(f"📊 This device is priced **around market average** for {brand_input}")
-    
-    with col2:
-        # Condition impact
-        condition_impact = filtered_df.groupby('Brand')['Condition_Score'].mean()
-        if condition_input > condition_impact.get(brand_input, 80):
-            st.success(f"✨ Above-average condition (+{condition_input - condition_impact.get(brand_input, 80):.0f} points) → Higher value")
-        elif condition_input < condition_impact.get(brand_input, 80):
-            st.warning(f"⚠️ Below-average condition ({condition_input - condition_impact.get(brand_input, 80):.0f} points) → Lower value")
-        else:
-            st.info("✅ Average condition for this brand")
+    if len(filtered_df) > 0 and len(filtered_df[filtered_df['Brand']==brand_input]) > 0:
+        col1, col2 = st.columns(2)
+        with col1:
+            # Price position analysis
+            brand_avg = filtered_df[filtered_df['Brand']==brand_input]['Price'].mean()
+            if ensemble_pred > brand_avg * 1.1:
+                st.info(f"📈 This device is priced **{((ensemble_pred/brand_avg)-1)*100:.0f}% above** the average {brand_input} price")
+            elif ensemble_pred < brand_avg * 0.9:
+                st.success(f"📉 This device is priced **{(1 - ensemble_pred/brand_avg)*100:.0f}% below** the average {brand_input} price")
+            else:
+                st.info(f"📊 This device is priced **around market average** for {brand_input}")
+        
+        with col2:
+            # Condition impact
+            condition_impact = filtered_df.groupby('Brand')['Condition_Score'].mean()
+            if condition_input > condition_impact.get(brand_input, 80):
+                st.success(f"✨ Above-average condition (+{condition_input - condition_impact.get(brand_input, 80):.0f} points) → Higher value")
+            elif condition_input < condition_impact.get(brand_input, 80):
+                st.warning(f"⚠️ Below-average condition ({condition_input - condition_impact.get(brand_input, 80):.0f} points) → Lower value")
+            else:
+                st.info("✅ Average condition for this brand")
+    else:
+        st.info("📊 Market data available for analysis")
     
     st.markdown("### 💡 Smart Recommendations")
     
@@ -523,10 +513,11 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
         recommendations.append("🔧 Consider professional cleaning/repair before selling to increase value")
     if warranty_input == "Yes" and months_input < 12:
         recommendations.append("📋 Device has warranty - highlight this in your listing")
-    if ensemble_pred > filtered_df['Price'].quantile(0.75):
-        recommendations.append("💰 Premium pricing range - target collectors or brand enthusiasts")
-    elif ensemble_pred < filtered_df['Price'].quantile(0.25):
-        recommendations.append("🎯 Great value deal - quick sale expected if priced competitively")
+    if len(filtered_df) > 0:
+        if ensemble_pred > filtered_df['Price'].quantile(0.75):
+            recommendations.append("💰 Premium pricing range - target collectors or brand enthusiasts")
+        elif ensemble_pred < filtered_df['Price'].quantile(0.25):
+            recommendations.append("🎯 Great value deal - quick sale expected if priced competitively")
     
     if not recommendations:
         recommendations.append("✅ Fairly priced device with good market positioning")
@@ -550,7 +541,7 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     st.markdown("### 📝 Selling Tips")
     
     tips = [
-        f"📸 Include {max(5, int(filtered_df['image_count'].mean()))}+ high-quality photos",
+        f"📸 Include {max(5, int(filtered_df['image_count'].mean()) if len(filtered_df) > 0 else 5)}+ high-quality photos",
         "📝 Write detailed description highlighting unique features",
         "🏷️ Price competitively - consider 5-10% below similar listings for quick sale",
         "✅ Mention all included accessories and original packaging",
@@ -643,66 +634,69 @@ def analyze_phone_condition(image, features):
     }
 
 if uploaded_file is not None:
-    # Load and display image
-    image = Image.open(uploaded_file)
-    
-    # Resize image for display
-    max_size = 400
-    if image.width > max_size or image.height > max_size:
-        ratio = min(max_size / image.width, max_size / image.height)
-        new_size = (int(image.width * ratio), int(image.height * ratio))
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.image(image, caption="Uploaded Phone Image", use_container_width=True)
-    
-    with col2:
-        st.markdown("### 🔍 AI Vision Analysis Results")
+    try:
+        # Load and display image
+        image = Image.open(uploaded_file)
         
-        with st.spinner("Analyzing image..."):
-            # Extract features
-            features = extract_image_features(image)
-            # Analyze condition
-            analysis = analyze_phone_condition(image, features)
+        # Resize image for display
+        max_size = 400
+        if image.width > max_size or image.height > max_size:
+            ratio = min(max_size / image.width, max_size / image.height)
+            new_size = (int(image.width * ratio), int(image.height * ratio))
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
         
-        # Display analysis results
-        st.markdown(f"""
-        <div style="background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
-            <p><strong>📱 Screen Condition:</strong> {analysis['screen_condition']}</p>
-            <p><strong>🔧 Body Condition:</strong> {analysis['body_condition']}</p>
-            <p><strong>{analysis['image_quality']}</strong></p>
-        </div>
-        """, unsafe_allow_html=True)
+        col1, col2 = st.columns([1, 1])
         
-        # Progress bar for overall score
-        st.progress(analysis['overall_score'] / 100)
-        st.metric("📊 Overall Condition Score", f"{analysis['overall_score']}/100")
+        with col1:
+            st.image(image, caption="Uploaded Phone Image", use_container_width=True)
         
-        # Recommendations based on score
-        if analysis['overall_score'] >= 85:
-            st.success("✅ Phone is in excellent condition! Can be listed as 'Like New' or 'Minor signs of use'")
-            price_adjustment = "+5%"
-        elif analysis['overall_score'] >= 70:
-            st.info("👍 Phone is in good condition with normal wear, price at market average")
-            price_adjustment = "0%"
-        else:
-            st.warning("⚠️ Phone shows significant wear, consider lowering price for faster sale")
-            price_adjustment = "-10%"
-        
-        # Price adjustment recommendation
-        st.caption(f"💡 Based on image analysis, suggested price adjustment: {price_adjustment}")
-        
-        # Optional: Show detailed image metrics (for debugging)
-        with st.expander("📊 Detailed Image Metrics"):
-            st.json({
-                "Brightness": f"{features['brightness']:.1f}",
-                "Contrast": f"{features['contrast']:.1f}",
-                "Sharpness": f"{features['sharpness']:.1f}",
-                "Edge Density": f"{features['edge_density']:.3f}",
-                "Uniformity": f"{features['uniformity']:.3f}"
-            })
+        with col2:
+            st.markdown("### 🔍 AI Vision Analysis Results")
+            
+            with st.spinner("Analyzing image..."):
+                # Extract features
+                features = extract_image_features(image)
+                # Analyze condition
+                analysis = analyze_phone_condition(image, features)
+            
+            # Display analysis results
+            st.markdown(f"""
+            <div style="background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
+                <p><strong>📱 Screen Condition:</strong> {analysis['screen_condition']}</p>
+                <p><strong>🔧 Body Condition:</strong> {analysis['body_condition']}</p>
+                <p><strong>{analysis['image_quality']}</strong></p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Progress bar for overall score
+            st.progress(analysis['overall_score'] / 100)
+            st.metric("📊 Overall Condition Score", f"{analysis['overall_score']}/100")
+            
+            # Recommendations based on score
+            if analysis['overall_score'] >= 85:
+                st.success("✅ Phone is in excellent condition! Can be listed as 'Like New' or 'Minor signs of use'")
+                price_adjustment = "+5%"
+            elif analysis['overall_score'] >= 70:
+                st.info("👍 Phone is in good condition with normal wear, price at market average")
+                price_adjustment = "0%"
+            else:
+                st.warning("⚠️ Phone shows significant wear, consider lowering price for faster sale")
+                price_adjustment = "-10%"
+            
+            # Price adjustment recommendation
+            st.caption(f"💡 Based on image analysis, suggested price adjustment: {price_adjustment}")
+            
+            # Optional: Show detailed image metrics (for debugging)
+            with st.expander("📊 Detailed Image Metrics"):
+                st.json({
+                    "Brightness": f"{features['brightness']:.1f}",
+                    "Contrast": f"{features['contrast']:.1f}",
+                    "Sharpness": f"{features['sharpness']:.1f}",
+                    "Edge Density": f"{features['edge_density']:.3f}",
+                    "Uniformity": f"{features['uniformity']:.3f}"
+                })
+    except Exception as e:
+        st.error(f"Error processing image: {str(e)}")
 else:
     st.info("👆 Please upload a phone photo for AI vision analysis")
     st.markdown("""
@@ -716,51 +710,58 @@ else:
 # ==================== Market Insights ====================
 st.header("📈 Market Insights & Trends")
 
-col1, col2 = st.columns(2)
+if len(filtered_df) > 0:
+    col1, col2 = st.columns(2)
 
-with col1:
-    # Price trend by storage
-    storage_trend = filtered_df.groupby('Storage_GB')['Price'].agg(['mean', 'count']).reset_index()
-    storage_trend = storage_trend[storage_trend['count'] > 5]
-    
-    fig_trend = px.line(
-        storage_trend, x='Storage_GB', y='mean',
-        title='Price Trend by Storage Capacity',
-        markers=True,
-        labels={'mean': 'Average Price (HKD)', 'Storage_GB': 'Storage (GB)'}
-    )
-    st.plotly_chart(fig_trend, use_container_width=True)
+    with col1:
+        # Price trend by storage
+        storage_trend = filtered_df.groupby('Storage_GB')['Price'].agg(['mean', 'count']).reset_index()
+        storage_trend = storage_trend[storage_trend['count'] > 5]
+        
+        if len(storage_trend) > 0:
+            fig_trend = px.line(
+                storage_trend, x='Storage_GB', y='mean',
+                title='Price Trend by Storage Capacity',
+                markers=True,
+                labels={'mean': 'Average Price (HKD)', 'Storage_GB': 'Storage (GB)'}
+            )
+            st.plotly_chart(fig_trend, use_container_width=True)
 
-with col2:
-    # Condition vs price by brand
-    brand_condition = filtered_df.groupby(['Brand', pd.cut(filtered_df['Condition_Score'], 
-                                                           bins=[0, 70, 85, 100], 
-                                                           labels=['Poor', 'Good', 'Excellent'])]).size().unstack()
-    
-    fig_condition_stack = px.bar(
-        brand_condition.reset_index(),
-        x='Brand', y=['Poor', 'Good', 'Excellent'],
-        title='Condition Distribution by Brand',
-        barmode='stack',
-        color_discrete_sequence=['#ff6b6b', '#ffd93d', '#6bcb77']
-    )
-    st.plotly_chart(fig_condition_stack, use_container_width=True)
+    with col2:
+        # Condition vs price by brand
+        filtered_df['Condition_Label'] = pd.cut(
+            filtered_df['Condition_Score'], 
+            bins=[0, 70, 85, 100], 
+            labels=['Poor', 'Good', 'Excellent']
+        )
+        brand_condition = filtered_df.groupby(['Brand', 'Condition_Label']).size().unstack().fillna(0)
+        
+        if len(brand_condition) > 0:
+            fig_condition_stack = px.bar(
+                brand_condition.reset_index(),
+                x='Brand', y=['Poor', 'Good', 'Excellent'],
+                title='Condition Distribution by Brand',
+                barmode='stack',
+                color_discrete_sequence=['#ff6b6b', '#ffd93d', '#6bcb77']
+            )
+            st.plotly_chart(fig_condition_stack, use_container_width=True)
 
-# Depreciation analysis
-st.subheader("📉 Value Depreciation Analysis")
+    # Depreciation analysis
+    st.subheader("📉 Value Depreciation Analysis")
 
-depreciation = filtered_df.groupby('Months_Since_Release')['Value_Retention'].mean().reset_index()
-depreciation = depreciation[depreciation['Months_Since_Release'] <= 60]
+    depreciation = filtered_df.groupby('Months_Since_Release')['Value_Retention'].mean().reset_index()
+    depreciation = depreciation[depreciation['Months_Since_Release'] <= 60]
 
-fig_depreciation = px.scatter(
-    depreciation, x='Months_Since_Release', y='Value_Retention',
-    title='Value Retention Over Time',
-    trendline='lowess',
-    labels={'Months_Since_Release': 'Months Since Release', 
-            'Value_Retention': 'Value Retention (%)'}
-)
-fig_depreciation.update_traces(marker=dict(size=8, color='#667eea'))
-st.plotly_chart(fig_depreciation, use_container_width=True)
+    if len(depreciation) > 0:
+        fig_depreciation = px.scatter(
+            depreciation, x='Months_Since_Release', y='Value_Retention',
+            title='Value Retention Over Time',
+            trendline='lowess',
+            labels={'Months_Since_Release': 'Months Since Release', 
+                    'Value_Retention': 'Value Retention (%)'}
+        )
+        fig_depreciation.update_traces(marker=dict(size=8, color='#667eea'))
+        st.plotly_chart(fig_depreciation, use_container_width=True)
 
 # ==================== Download Predictions ====================
 st.sidebar.markdown("---")
