@@ -276,12 +276,13 @@ with tab3:
 st.header("🤖 Price Prediction Model")
 
 @st.cache_resource
+@st.cache_resource
 def train_models():
     """Train optimized models based on notebook analysis"""
     # Split data
     X_train, X_test, y_train, y_test = train_test_split(X, y_log, test_size=0.2, random_state=42)
     
-    # Store feature names before scaling
+    # Store feature names BEFORE scaling (use X.columns)
     feature_names_list = X.columns.tolist()
     
     # Scale features
@@ -289,51 +290,9 @@ def train_models():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
     
-    # Gradient Boosting - Best model from notebook (R2_Log: 0.4383)
-    gb = GradientBoostingRegressor(
-        n_estimators=300,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=42
-    )
-    gb.fit(X_train_scaled, y_train)
+    # ... rest of the training code ...
     
-    # Random Forest - Second best model (R2_Log: 0.4256)
-    rf = RandomForestRegressor(
-        n_estimators=500,
-        min_samples_leaf=3,
-        random_state=42,
-        n_jobs=-1
-    )
-    rf.fit(X_train_scaled, y_train)
-    
-    # Ridge Regression
-    ridge = Ridge(alpha=1.0)
-    ridge.fit(X_train_scaled, y_train)
-    
-    # Make predictions
-    models = {
-        'Gradient Boosting': gb,
-        'Random Forest': rf,
-        'Ridge Regression': ridge
-    }
-    
-    results = {}
-    for name, model in models.items():
-        y_pred = model.predict(X_test_scaled)
-        # Convert from log scale back to original price for error metrics
-        y_pred_original = np.expm1(y_pred)
-        y_test_original = np.expm1(y_test)
-        
-        results[name] = {
-            'model': model,
-            'rmse': np.sqrt(mean_squared_error(y_test_original, y_pred_original)),
-            'mae': mean_absolute_error(y_test_original, y_pred_original),
-            'r2_log': r2_score(y_test, y_pred),
-            'predictions': y_pred,
-            'actual': y_test.values
-        }
-    
+    # Make sure to return feature_names_list
     return results, scaler, feature_names_list
 
 with st.spinner("Training AI models..."):
@@ -355,18 +314,18 @@ for i, (name, results) in enumerate(model_results.items()):
         </div>
         """, unsafe_allow_html=True)
 
-# Feature importance for Gradient Boosting (best model)
+# Feature importance - use X.columns directly
 best_model_name = "Gradient Boosting"
 best_model = model_results[best_model_name]['model']
 
 if hasattr(best_model, 'feature_importances_'):
-    # Get feature importances
+    # Use X.columns directly to ensure correct length
     importances = best_model.feature_importances_
+    feature_names_from_X = X.columns.tolist()
     
-    # Ensure lengths match before creating DataFrame
-    if len(feature_names) == len(importances):
+    if len(feature_names_from_X) == len(importances):
         feature_importance = pd.DataFrame({
-            'Feature': feature_names,
+            'Feature': feature_names_from_X,
             'Importance': importances
         }).sort_values('Importance', ascending=False).head(15)
         
@@ -377,11 +336,10 @@ if hasattr(best_model, 'feature_importances_'):
         )
         fig_importance.update_layout(height=500)
         st.plotly_chart(fig_importance, use_container_width=True)
-        
         st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
     else:
-        st.info(f"📊 Feature importance visualization skipped (feature count: {len(feature_names)}, importance count: {len(importances)})")
-
+        st.info(f"📊 Feature importance: {len(feature_names_from_X)} features, {len(importances)} importances - skipping visualization")
+        
 # ==================== Interactive Price Prediction ====================
 st.header("🎯 Interactive Price Predictor")
 
