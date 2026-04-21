@@ -13,7 +13,7 @@ import requests
 import json
 from io import BytesIO
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.linear_model import Ridge, Lasso, ElasticNet, RidgeCV
+from sklearn.linear_model import Ridge, Lasso, ElasticNet
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -264,11 +264,11 @@ with tab3:
         st.plotly_chart(fig_storage, use_container_width=True)
     
     with col2:
+        # Removed trendline='ols' to avoid statsmodels dependency
         fig_condition = px.scatter(
             filtered_df, x='Condition_Percentage', y='Price',
             title='Price vs Condition',
-            color='Brand',
-            trendline='ols'
+            color='Brand'
         )
         st.plotly_chart(fig_condition, use_container_width=True)
 
@@ -335,6 +335,7 @@ def train_models():
         }
     
     return results, scaler, feature_names_list
+
 with st.spinner("Training AI models..."):
     model_results, scaler, feature_names = train_models()
 
@@ -344,7 +345,6 @@ st.subheader("📊 Model Performance Comparison (Based on Notebook Analysis)")
 col1, col2, col3 = st.columns(3)
 for i, (name, results) in enumerate(model_results.items()):
     with [col1, col2, col3][i]:
-        # Determine badge based on performance
         badge = "🥇 Best" if name == "Gradient Boosting" else "🥈" if name == "Random Forest" else "📊"
         st.markdown(f"""
         <div class="metric-card">
@@ -356,12 +356,10 @@ for i, (name, results) in enumerate(model_results.items()):
         """, unsafe_allow_html=True)
 
 # Feature importance for Gradient Boosting (best model)
-best_model_name = "Gradient Boosting"  # Best model from notebook
+best_model_name = "Gradient Boosting"
 best_model = model_results[best_model_name]['model']
 
 if hasattr(best_model, 'feature_importances_'):
-    # Get feature importances for all features (scaled features)
-    # We need to map back to original feature names
     feature_importance = pd.DataFrame({
         'Feature': feature_names,
         'Importance': best_model.feature_importances_
@@ -375,7 +373,6 @@ if hasattr(best_model, 'feature_importances_'):
     fig_importance.update_layout(height=500)
     st.plotly_chart(fig_importance, use_container_width=True)
     
-    # Add note about consensus feature selection
     st.caption("📊 Features selected via consensus ranking (Lasso + Random Forest + Gradient Boosting)")
 
 # ==================== Interactive Price Prediction ====================
@@ -404,36 +401,42 @@ with col3:
 def prepare_prediction_input():
     input_dict = {}
     
-    # Numerical features (based on selected_features)
+    # Get median values from training data for reference
+    original_price_median = df['Original_Price_HKD'].median()
+    post_recency_median = df['Post_Recency_Log'].median()
+    days_since_posted_median = df['Days_Since_Posted'].median()
+    product_origin_unknown_default = df['Product_Origin_Unknown'].mode()[0] if len(df['Product_Origin_Unknown'].mode()) > 0 else 0
+    is_premium_tier_default = df['Is_Premium_Tier'].mode()[0] if len(df['Is_Premium_Tier'].mode()) > 0 else 0
+    
     for feat in feature_names:
         if feat == 'Storage_GB':
             input_dict[feat] = storage_input
         elif feat == 'Months_Since_Release':
             input_dict[feat] = months_input
         elif feat == 'Condition_Score':
-            input_dict[feat] = condition_input  # Using condition as proxy
+            # Map condition percentage to Condition_Score (similar scale 0-100)
+            input_dict[feat] = condition_input
         elif feat == 'Battery_Health_Percent':
             input_dict[feat] = battery_input
         elif feat == 'Original_Price_HKD':
-            input_dict[feat] = df['Original_Price_HKD'].median()
+            input_dict[feat] = original_price_median
         elif feat == 'Post_Recency_Log':
-            input_dict[feat] = df['Post_Recency_Log'].median()
+            input_dict[feat] = post_recency_median
         elif feat == 'Days_Since_Posted':
-            input_dict[feat] = df['Days_Since_Posted'].median()
+            input_dict[feat] = days_since_posted_median
         elif feat == 'Product_Origin_Unknown':
-            input_dict[feat] = 1 if df['Product_Origin_Unknown'].mode()[0] == 1 else 0
+            input_dict[feat] = product_origin_unknown_default
         elif feat == 'Is_Premium_Tier':
-            input_dict[feat] = 1 if df['Is_Premium_Tier'].mode()[0] == 1 else 0
+            input_dict[feat] = is_premium_tier_default
         elif feat.startswith('Brand_'):
             input_dict[feat] = 1 if feat == f'Brand_{brand_input}' else 0
         elif feat in ['Has_Warranty', 'Has_Box', 'Has_Accessories', 
                       'Has_Repair_History', 'Is_Working', 'Is_MTR_Trade',
                       'Has_Receipt', 'Is_Firm_Price', 'Is_Urgent_Sale',
-                      'Is_Premium_Tier', 'Has_Crack_Or_Line', 'Has_Dual_SIM',
+                      'Has_Crack_Or_Line', 'Has_Dual_SIM',
                       'Has_Brand_Keyword_Mismatch']:
             input_dict[feat] = 0
         else:
-            # Use median from training data
             input_dict[feat] = X[feat].median() if feat in X.columns else 0
     
     # Override specific binary features
@@ -442,7 +445,6 @@ def prepare_prediction_input():
     input_dict['Has_Accessories'] = 1 if accessories_input == "Yes" else 0
     input_dict['Has_Repair_History'] = 1 if repair_input == "Yes" else 0
     
-    # Create DataFrame with correct column order
     input_df = pd.DataFrame([input_dict])[feature_names]
     input_df = input_df.fillna(0)
     
@@ -455,7 +457,7 @@ input_scaled = scaler.transform(input_features)
 predictions = {}
 for name, results in model_results.items():
     pred_log = results['model'].predict(input_scaled)[0]
-    pred_original = np.expm1(pred_log)  # Convert from log scale
+    pred_original = np.expm1(pred_log)
     predictions[name] = pred_original
 
 # Display predictions
@@ -492,7 +494,6 @@ st.header("🤖 AI Assistant - Smart Recommendations")
 
 st.markdown("Get personalized buying/selling recommendations from our AI assistant")
 
-# Prepare context for recommendations
 def get_llm_recommendation():
     context = f"""
     Phone Specifications:
@@ -514,7 +515,6 @@ def get_llm_recommendation():
     - Average price for {brand_input}: HK${filtered_df[filtered_df['Brand']==brand_input]['Price'].mean():,.0f}
     - Typical discount rate: {filtered_df['Price_Discount_Pct'].mean():.1f}%
     """
-    
     return context
 
 recommendation_context = get_llm_recommendation()
@@ -524,7 +524,6 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     col1, col2 = st.columns(2)
     with col1:
-        # Price position analysis
         brand_avg = filtered_df[filtered_df['Brand']==brand_input]['Price'].mean()
         if ensemble_pred > brand_avg * 1.1:
             st.info(f"📈 This device is priced **{((ensemble_pred/brand_avg)-1)*100:.0f}% above** the average {brand_input} price")
@@ -534,7 +533,6 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
             st.info(f"📊 This device is priced **around market average** for {brand_input}")
     
     with col2:
-        # Condition impact
         condition_impact = filtered_df.groupby('Brand')['Condition_Percentage'].mean()
         if condition_input > condition_impact.get(brand_input, 80):
             st.success(f"✨ Above-average condition (+{condition_input - condition_impact.get(brand_input, 80):.0f}%) → Higher value")
@@ -562,7 +560,6 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     for rec in recommendations:
         st.write(rec)
     
-    # Analysis based on best model
     st.markdown("### 🧠 AI Deep Analysis")
     
     if ensemble_pred > 8000:
@@ -574,7 +571,6 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     st.info(f"💭 {analysis}")
     
-    # Selling tips
     st.markdown("### 📝 Selling Tips")
     
     tips = [
@@ -587,9 +583,8 @@ with st.expander("📝 AI Analysis & Recommendations", expanded=True):
     
     for tip in tips:
         st.write(tip)
-        
-# ==================== FIXED: Phone Condition Image Analysis ====================
 
+# ==================== Phone Condition Image Analysis ====================
 st.header("📸 Phone Condition Analysis (AI Vision Detection)")
 
 st.markdown("Upload a phone photo for AI-powered condition assessment (screen condition, body wear, overall score)")
@@ -602,21 +597,17 @@ uploaded_file = st.file_uploader(
 
 def extract_image_features(image):
     """Extract image features for analysis"""
-    img_array = np.array(image.convert('L'))  # Convert to grayscale
+    img_array = np.array(image.convert('L'))
     
-    # Calculate image quality metrics
     brightness = np.mean(img_array)
     contrast = np.std(img_array)
     sharpness = np.std(np.diff(img_array, axis=0)) + np.std(np.diff(img_array, axis=1))
     
-    # Detect potential defects based on image texture
     from scipy import ndimage
     
-    # Edge detection (may indicate scratches or cracks)
     edges = ndimage.sobel(img_array)
     edge_density = np.mean(np.abs(edges) > 30)
     
-    # Uniformity detection (may indicate worn areas)
     uniformity = 1 - np.std(img_array) / np.mean(img_array) if np.mean(img_array) > 0 else 0
     
     return {
@@ -630,7 +621,6 @@ def extract_image_features(image):
 def analyze_phone_condition(image, features):
     """Analyze phone condition based on image features"""
     
-    # Screen condition assessment
     if features['edge_density'] > 0.15:
         screen_condition = "⚠️ Potential scratches/cracks detected"
         screen_score = 60
@@ -641,7 +631,6 @@ def analyze_phone_condition(image, features):
         screen_condition = "✨ Screen in excellent condition"
         screen_score = 90
     
-    # Body condition assessment
     if features['uniformity'] < 0.6:
         body_condition = "🔄 Visible wear on body"
         body_score = 65
@@ -652,13 +641,11 @@ def analyze_phone_condition(image, features):
         body_condition = "🌟 Body looks like new"
         body_score = 95
     
-    # Image quality assessment
     if features['sharpness'] < 50:
         image_quality = "📷 Image quality is low, consider retaking the photo"
     else:
         image_quality = "✅ Image is clear, accurate assessment possible"
     
-    # Overall score
     overall_score = int((screen_score + body_score) / 2)
     
     return {
@@ -671,10 +658,8 @@ def analyze_phone_condition(image, features):
     }
 
 if uploaded_file is not None:
-    # Load and display image
     image = Image.open(uploaded_file)
     
-    # Resize image for display
     max_size = 400
     if image.width > max_size or image.height > max_size:
         ratio = min(max_size / image.width, max_size / image.height)
@@ -690,12 +675,9 @@ if uploaded_file is not None:
         st.markdown("### 🔍 AI Vision Analysis Results")
         
         with st.spinner("Analyzing image..."):
-            # Extract features
             features = extract_image_features(image)
-            # Analyze condition
             analysis = analyze_phone_condition(image, features)
         
-        # Display analysis results
         st.markdown(f"""
         <div style="background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
             <p><strong>📱 Screen Condition:</strong> {analysis['screen_condition']}</p>
@@ -704,11 +686,9 @@ if uploaded_file is not None:
         </div>
         """, unsafe_allow_html=True)
         
-        # Progress bar for overall score
         st.progress(analysis['overall_score'] / 100)
         st.metric("📊 Overall Condition Score", f"{analysis['overall_score']}/100")
         
-        # Recommendations based on score
         if analysis['overall_score'] >= 85:
             st.success("✅ Phone is in excellent condition! Can be listed as 'Like New' or 'Minor signs of use'")
             price_adjustment = "+5%"
@@ -719,10 +699,8 @@ if uploaded_file is not None:
             st.warning("⚠️ Phone shows significant wear, consider lowering price for faster sale")
             price_adjustment = "-10%"
         
-        # Price adjustment recommendation
         st.caption(f"💡 Based on image analysis, suggested price adjustment: {price_adjustment}")
         
-        # Optional: Show detailed image metrics (for debugging)
         with st.expander("📊 Detailed Image Metrics"):
             st.json({
                 "Brightness": f"{features['brightness']:.1f}",
@@ -741,14 +719,12 @@ else:
     - Avoid glare and shadows
     """)
 
-
 # ==================== Market Insights ====================
 st.header("📈 Market Insights & Trends")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    # Price trend by storage
     storage_trend = filtered_df.groupby('Storage_GB')['Price'].agg(['mean', 'count']).reset_index()
     storage_trend = storage_trend[storage_trend['count'] > 5]
     
@@ -761,7 +737,6 @@ with col1:
     st.plotly_chart(fig_trend, use_container_width=True)
 
 with col2:
-    # Condition vs price by brand
     brand_condition = filtered_df.groupby(['Brand', pd.cut(filtered_df['Condition_Percentage'], 
                                                            bins=[0, 70, 85, 100], 
                                                            labels=['Poor', 'Good', 'Excellent'])]).size().unstack()
@@ -775,7 +750,6 @@ with col2:
     )
     st.plotly_chart(fig_condition_stack, use_container_width=True)
 
-# Depreciation analysis
 st.subheader("📉 Value Depreciation Analysis")
 
 depreciation = filtered_df.groupby('Months_Since_Release')['Value_Retention'].mean().reset_index()
@@ -796,7 +770,6 @@ st.sidebar.markdown("---")
 st.sidebar.header("💾 Export Data")
 
 if st.sidebar.button("📥 Download Predictions"):
-    # Create export dataframe
     export_df = pd.DataFrame({
         'Model': list(predictions.keys()),
         'Predicted_Price_HKD': list(predictions.values())
@@ -819,13 +792,13 @@ st.sidebar.markdown("""
 - **Brands:** {}
 - **Avg Price:** HK${:,.0f}
 - **Best Model:** {}
-- **R² Score:** {:.3f}
+- **R² (log scale):** {:.3f}
 """.format(
     len(df),
     df['Brand'].nunique(),
     df['Price'].mean(),
     best_model_name,
-    model_results[best_model_name]['r2']
+    model_results[best_model_name]['r2_log']
 ))
 
 st.sidebar.markdown("---")
@@ -838,6 +811,5 @@ st.sidebar.markdown("""
 - 💾 Export Predictions
 """)
 
-# Main execution
 if __name__ == "__main__":
     pass
