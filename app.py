@@ -485,66 +485,169 @@ uploaded_file = st.file_uploader(
     help="Upload a clear photo of the phone (good lighting, front-facing angle recommended)"
 )
 
-def extract_image_features(image):
-    """Extract image features for analysis"""
-    img_array = np.array(image.convert('L'))  # Convert to grayscale
+def extract_advanced_image_features(image):
+    """Extract advanced image features for more accurate analysis"""
     
-    # Calculate image quality metrics
-    brightness = np.mean(img_array)
-    contrast = np.std(img_array)
-    sharpness = np.std(np.diff(img_array, axis=0)) + np.std(np.diff(img_array, axis=1))
+    # Convert to different color spaces
+    img_rgb = np.array(image)
+    img_gray = np.array(image.convert('L'))
     
-    # Detect potential defects based on image texture
+    # Basic statistics
+    brightness = np.mean(img_gray)
+    contrast = np.std(img_gray)
+    
+    # Edge detection (more sophisticated)
     from scipy import ndimage
+    from scipy import signal
     
-    # Edge detection (may indicate scratches or cracks)
-    edges = ndimage.sobel(img_array)
-    edge_density = np.mean(np.abs(edges) > 30)
+    # Sobel edge detection
+    sobel_x = ndimage.sobel(img_gray, axis=0)
+    sobel_y = ndimage.sobel(img_gray, axis=1)
+    edge_magnitude = np.sqrt(sobel_x**2 + sobel_y**2)
+    edge_density = np.mean(edge_magnitude > 30)
     
-    # Uniformity detection (may indicate worn areas)
-    uniformity = 1 - np.std(img_array) / np.mean(img_array) if np.mean(img_array) > 0 else 0
+    # Texture analysis using Local Binary Pattern (simplified)
+    # Calculate local variance as texture indicator
+    kernel = np.ones((5,5)) / 25
+    local_mean = signal.convolve2d(img_gray, kernel, mode='same')
+    local_var = signal.convolve2d((img_gray - local_mean)**2, kernel, mode='same')
+    texture_uniformity = 1 - np.std(local_var) / (np.mean(local_var) + 1e-6)
+    
+    # Color analysis (if RGB image)
+    has_color = len(img_rgb.shape) == 3
+    if has_color:
+        # Convert to HSV for better color analysis
+        from colorsys import rgb_to_hsv
+        hsv_img = np.array([rgb_to_hsv(r/255, g/255, b/255) for r,g,b in img_rgb.reshape(-1,3)]).reshape(img_rgb.shape)
+        color_saturation = np.mean(hsv_img[:,:,1])
+        color_variety = np.std(hsv_img[:,:,0])  # Hue variation
+    else:
+        color_saturation = 0.5
+        color_variety = 0.1
+    
+    # Image quality metrics
+    # Sharpness using Laplacian variance
+    laplacian = ndimage.laplace(img_gray)
+    sharpness = np.var(laplacian)
+    
+    # Compression artifacts detection (simplified)
+    # Check for blockiness (JPEG artifacts)
+    h, w = img_gray.shape
+    block_size = 8
+    h_blocks = h // block_size
+    w_blocks = w // block_size
+    if h_blocks > 0 and w_blocks > 0:
+        block_diff = 0
+        for i in range(h_blocks):
+            for j in range(w_blocks):
+                block = img_gray[i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size]
+                block_diff += np.std(block)
+        compression_score = min(100, block_diff / (h_blocks * w_blocks) * 10)
+    else:
+        compression_score = 50
+    
+    # Detect potential screen issues (bright spots, dark spots)
+    # Using percentile analysis
+    bright_threshold = np.percentile(img_gray, 95)
+    dark_threshold = np.percentile(img_gray, 5)
+    bright_spots = np.mean(img_gray > bright_threshold)
+    dark_spots = np.mean(img_gray < dark_threshold)
     
     return {
         'brightness': brightness,
         'contrast': contrast,
-        'sharpness': sharpness,
         'edge_density': edge_density,
-        'uniformity': uniformity
+        'texture_uniformity': texture_uniformity,
+        'color_saturation': color_saturation,
+        'color_variety': color_variety,
+        'sharpness': sharpness,
+        'compression_score': compression_score,
+        'bright_spots': bright_spots,
+        'dark_spots': dark_spots
     }
 
-def analyze_phone_condition(image, features):
-    """Analyze phone condition based on image features"""
+def analyze_phone_condition_advanced(image, features):
+    """Analyze phone condition based on advanced image features"""
     
     # Screen condition assessment
-    if features['edge_density'] > 0.15:
-        screen_condition = "⚠️ Potential scratches/cracks detected"
-        screen_score = 60
+    screen_score = 90  # Base score
+    
+    # High edge density indicates scratches or cracks
+    if features['edge_density'] > 0.25:
+        screen_score -= 25
+        screen_condition = "⚠️ Significant scratches/cracks detected on screen"
+    elif features['edge_density'] > 0.15:
+        screen_score -= 15
+        screen_condition = "📱 Visible scratches or signs of wear on screen"
     elif features['edge_density'] > 0.08:
-        screen_condition = "📱 Minor signs of use"
-        screen_score = 75
+        screen_score -= 5
+        screen_condition = "✨ Minor signs of use on screen"
     else:
-        screen_condition = "✨ Screen in excellent condition"
-        screen_score = 90
+        screen_condition = "🌟 Screen appears in excellent condition"
+    
+    # Bright spots / dark spots (potential screen damage)
+    if features['bright_spots'] > 0.05:
+        screen_score -= 20
+        screen_condition += " | Bright spots detected"
+    if features['dark_spots'] > 0.05:
+        screen_score -= 15
+        screen_condition += " | Dark spots detected"
     
     # Body condition assessment
-    if features['uniformity'] < 0.6:
-        body_condition = "🔄 Visible wear on body"
-        body_score = 65
-    elif features['uniformity'] < 0.75:
-        body_condition = "👍 Normal signs of use"
-        body_score = 80
+    body_score = 85  # Base score
+    
+    # Texture uniformity indicates surface wear
+    if features['texture_uniformity'] < 0.3:
+        body_score -= 20
+        body_condition = "🔄 Significant wear on body surface"
+    elif features['texture_uniformity'] < 0.5:
+        body_score -= 10
+        body_condition = "👍 Normal signs of use on body"
+    elif features['texture_uniformity'] < 0.7:
+        body_score -= 3
+        body_condition = "✨ Minimal signs of use"
     else:
-        body_condition = "🌟 Body looks like new"
-        body_score = 95
+        body_condition = "🌟 Body appears like new"
+    
+    # Color condition (fading, discoloration)
+    if features['color_saturation'] < 0.3:
+        body_score -= 10
+        body_condition += " | Possible color fading"
+    elif features['color_saturation'] > 0.7:
+        body_score += 5
+        body_condition += " | Vibrant colors"
     
     # Image quality assessment
     if features['sharpness'] < 50:
-        image_quality = "📷 Image quality is low, consider retaking the photo"
+        image_quality = "📷 Image quality is low, consider retaking with better lighting"
+        reliability = "Low"
+    elif features['sharpness'] < 200:
+        image_quality = "📷 Image quality is acceptable"
+        reliability = "Medium"
     else:
-        image_quality = "✅ Image is clear, accurate assessment possible"
+        image_quality = "✅ Image is clear and detailed"
+        reliability = "High"
     
-    # Overall score
-    overall_score = int((screen_score + body_score) / 2)
+    if features['compression_score'] > 80:
+        image_quality += " | Possible compression artifacts detected"
+    
+    # Ensure scores are within bounds
+    screen_score = max(40, min(100, screen_score))
+    body_score = max(40, min(100, body_score))
+    
+    # Overall score (weighted average)
+    overall_score = int((screen_score * 0.6 + body_score * 0.4))
+    
+    # Detailed findings
+    findings = []
+    if features['edge_density'] > 0.12:
+        findings.append("🔍 Multiple edges detected - possible screen scratches")
+    if features['texture_uniformity'] < 0.4:
+        findings.append("🔍 Uneven surface texture detected - possible body wear")
+    if features['bright_spots'] > 0.03:
+        findings.append("🔍 Bright spots detected - possible screen backlight issues")
+    if features['dark_spots'] > 0.03:
+        findings.append("🔍 Dark spots detected - possible dead pixels or dirt")
     
     return {
         'screen_condition': screen_condition,
@@ -552,7 +655,10 @@ def analyze_phone_condition(image, features):
         'body_condition': body_condition,
         'body_score': body_score,
         'image_quality': image_quality,
-        'overall_score': overall_score
+        'reliability': reliability,
+        'overall_score': overall_score,
+        'findings': findings,
+        'features': features
     }
 
 if uploaded_file is not None:
@@ -576,57 +682,93 @@ if uploaded_file is not None:
             st.markdown("### 🔍 AI Vision Analysis Results")
             
             with st.spinner("Analyzing image..."):
-                # Extract features
-                features = extract_image_features(image)
+                # Extract advanced features
+                features = extract_advanced_image_features(image)
                 # Analyze condition
-                analysis = analyze_phone_condition(image, features)
+                analysis = analyze_phone_condition_advanced(image, features)
             
-            # Display analysis results
+            # Reliability indicator
+            reliability_color = {
+                "High": "🟢",
+                "Medium": "🟡",
+                "Low": "🔴"
+            }.get(analysis['reliability'], "⚪")
+            
             st.markdown(f"""
             <div style="background: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;">
                 <p><strong>📱 Screen Condition:</strong> {analysis['screen_condition']}</p>
                 <p><strong>🔧 Body Condition:</strong> {analysis['body_condition']}</p>
                 <p><strong>{analysis['image_quality']}</strong></p>
+                <p><strong>{reliability_color} Analysis Reliability:</strong> {analysis['reliability']}</p>
             </div>
             """, unsafe_allow_html=True)
             
+            # Display findings
+            if analysis['findings']:
+                st.markdown("### 🔍 Detailed Findings")
+                for finding in analysis['findings']:
+                    st.write(finding)
+            
             # Progress bar for overall score
             st.progress(analysis['overall_score'] / 100)
-            st.metric("📊 Overall Condition Score", f"{analysis['overall_score']}/100")
+            
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.metric("📊 Overall Condition", f"{analysis['overall_score']}/100")
+            with col_b:
+                st.metric("📱 Screen Score", f"{analysis['screen_score']}/100")
+            st.metric("🔧 Body Score", f"{analysis['body_score']}/100")
             
             # Recommendations based on score
+            st.markdown("### 💡 Recommendations")
+            
             if analysis['overall_score'] >= 85:
-                st.success("✅ Phone is in excellent condition! Can be listed as 'Like New' or 'Minor signs of use'")
-                price_adjustment = "+5%"
+                st.success("✅ Phone is in excellent condition! Can be listed as 'Like New'")
+                price_adjustment = "+5-10%"
+                recommendation = "Highlight 'excellent condition' in listing title"
             elif analysis['overall_score'] >= 70:
-                st.info("👍 Phone is in good condition with normal wear, price at market average")
+                st.info("👍 Phone is in good condition with normal wear")
                 price_adjustment = "0%"
+                recommendation = "Price at market average, mention minor signs of use"
+            elif analysis['overall_score'] >= 55:
+                st.warning("⚠️ Phone shows noticeable wear, consider price adjustment")
+                price_adjustment = "-10-15%"
+                recommendation = "Focus on functionality and provide detailed photos of wear"
             else:
-                st.warning("⚠️ Phone shows significant wear, consider lowering price for faster sale")
-                price_adjustment = "-10%"
+                st.error("🔧 Phone shows significant wear, consider repair or significant price reduction")
+                price_adjustment = "-20-30%"
+                recommendation = "Consider repairing screen/cosmetic issues before selling"
             
-            # Price adjustment recommendation
-            st.caption(f"💡 Based on image analysis, suggested price adjustment: {price_adjustment}")
+            st.info(f"💡 **Price Adjustment Suggestion:** {price_adjustment}")
+            st.info(f"📝 **Listing Tip:** {recommendation}")
             
-            # Optional: Show detailed image metrics (for debugging)
-            with st.expander("📊 Detailed Image Metrics"):
+            # Display detailed metrics in expander
+            with st.expander("📊 Technical Image Metrics"):
                 st.json({
                     "Brightness": f"{features['brightness']:.1f}",
                     "Contrast": f"{features['contrast']:.1f}",
                     "Sharpness": f"{features['sharpness']:.1f}",
                     "Edge Density": f"{features['edge_density']:.3f}",
-                    "Uniformity": f"{features['uniformity']:.3f}"
+                    "Texture Uniformity": f"{features['texture_uniformity']:.3f}",
+                    "Color Saturation": f"{features['color_saturation']:.3f}",
+                    "Color Variety": f"{features['color_variety']:.3f}",
+                    "Compression Score": f"{features['compression_score']:.1f}",
+                    "Bright Spots": f"{features['bright_spots']:.3f}",
+                    "Dark Spots": f"{features['dark_spots']:.3f}"
                 })
+            
     except Exception as e:
         st.error(f"Error processing image: {str(e)}")
+        st.info("Please try uploading a different image or ensure the image is clear")
 else:
     st.info("👆 Please upload a phone photo for AI vision analysis")
     st.markdown("""
-    ### 📸 Photo Tips:
-    - Take photos in well-lit environment
-    - Include front, back, and edge photos of the phone
-    - Take close-up photos of any scratches or damage
-    - Avoid glare and shadows
+    ### 📸 For Best Results:
+    - 📱 Take photos in **good lighting** (natural daylight works best)
+    - 🔍 Include **front, back, and edge** photos of the phone
+    - 🔬 Take **close-up photos** of any scratches or damage
+    - ✨ Avoid **glare and shadows**
+    - 📐 Keep the phone **centered and in focus**
     """)
 
 # ==================== Market Insights ====================
